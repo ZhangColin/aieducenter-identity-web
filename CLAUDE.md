@@ -22,6 +22,16 @@
 - 样式：Tailwind CSS，用 `cn()` 合并类名
 - API 调用：通过 Next.js rewrite 代理 `/api/*` → 后端，前端直接 fetch
 
-## 开发流程
+## Agent skills
 
-严格按 Superpowers 技能流程执行：brainstorming → writing-plans → TDD → verification
+### Issue tracker
+
+Issues live in GitHub Issues (via the `gh` CLI). See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Five canonical roles, label string equal to each role name. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: one `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
