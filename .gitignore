@@ -12,3 +12,8 @@ out/
 # OS
 .DS_Store
 Thumbs.db
+
+# TypeScript incremental build cache
+tsconfig.tsbuildinfo
+# next.js generated types
+next-env.d.ts
