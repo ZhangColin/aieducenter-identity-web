@@ -46,3 +46,15 @@ export function serializeAuthorizeParams(params: AuthorizeParams): string {
   if (params.scope) query.set('scope', params.scope)
   return query.toString()
 }
+
+/** Next searchParams 记录（同名多值取首个）→ URLSearchParams，供 parseAuthorizeParams 消费。 */
+export function toURLSearchParams(
+  record: Record<string, string | string[] | undefined>,
+): URLSearchParams {
+  const query = new URLSearchParams()
+  for (const [key, value] of Object.entries(record)) {
+    const single = Array.isArray(value) ? value[0] : value
+    if (single !== undefined) query.set(key, single)
+  }
+  return query
+}

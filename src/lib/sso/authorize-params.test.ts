@@ -103,4 +103,21 @@ describe('serializeAuthorizeParams', () => {
 
     expect(parseAuthorizeParams(serializeAuthorizeParams(params))).toEqual(params)
   })
+
+  it('preserves the full authorize context across a login ↔ register hop', () => {
+    // 登录页 URL（/authorize 302 透传而来）→ 解析 → 序列化挂到 /register → 注册页再解析 → 完全一致
+    const loginQuery =
+      'client_id=demo&redirect_uri=http%3A%2F%2Fdemo.localhost%3A3000%2Fcallback&state=abc&nonce=xyz&scope=openid+profile'
+    const params = parseAuthorizeParams(loginQuery)
+    expect(params).not.toBeNull()
+
+    const registerHref = `/register?${serializeAuthorizeParams(params!)}`
+    const reparsed = parseAuthorizeParams(new URL(registerHref, 'http://localhost').search)
+
+    expect(reparsed).toEqual(params)
+    expect(registerHref).toContain('client_id=demo')
+    expect(registerHref).toContain('state=abc')
+    expect(registerHref).toContain('nonce=xyz')
+    expect(registerHref).toContain('scope=openid+profile')
+  })
 })

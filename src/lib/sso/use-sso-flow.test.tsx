@@ -3,6 +3,7 @@ import { act, renderHook } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { useSsoFlow } from './use-sso-flow'
+import { SsoApiError } from './sso-api'
 
 const authorizeParams = {
   clientId: 'demo',
@@ -117,5 +118,47 @@ describe('useSsoFlow', () => {
     expect(result.current.status).toBe('success')
     expect(result.current.error).toBeNull()
     expect(navigate).toHaveBeenCalledTimes(1)
+  })
+
+  it('runs the injected action (register) instead of the default login', async () => {
+    const action = vi
+      .fn()
+      .mockResolvedValue({ redirectUrl: 'http://demo.localhost:3000/callback?code=abc' })
+    const navigate = vi.fn()
+    const { result } = renderHook(() => useSsoFlow(authorizeParams, { navigate, action }))
+
+    await act(async () => {
+      await result.current.submit('new@aieducenter.com', 'secret123')
+    })
+
+    expect(action).toHaveBeenCalledWith(authorizeParams, 'new@aieducenter.com', 'secret123')
+    expect(result.current.status).toBe('success')
+    expect(navigate).toHaveBeenCalledWith('http://demo.localhost:3000/callback?code=abc')
+  })
+
+  it('surfaces the injected action’s error message inline', async () => {
+    const action = vi.fn().mockRejectedValue(new SsoApiError('邮箱已被使用', 409))
+    const navigate = vi.fn()
+    const { result } = renderHook(() => useSsoFlow(authorizeParams, { navigate, action }))
+
+    await act(async () => {
+      await result.current.submit('a@b.c', 'x')
+    })
+
+    expect(result.current.status).toBe('error')
+    expect(result.current.error).toBe('邮箱已被使用')
+    expect(navigate).not.toHaveBeenCalled()
+  })
+
+  it('falls back to a neutral copy when the action throws a non-Error', async () => {
+    const action = vi.fn().mockRejectedValue('boom')
+    const { result } = renderHook(() => useSsoFlow(authorizeParams, { navigate: vi.fn(), action }))
+
+    await act(async () => {
+      await result.current.submit('a@b.c', 'x')
+    })
+
+    expect(result.current.status).toBe('error')
+    expect(result.current.error).toBe('操作失败，请稍后重试')
   })
 })

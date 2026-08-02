@@ -1,4 +1,5 @@
 import type { AuthorizeParams } from './authorize-params'
+import { parseContact } from './contact'
 
 /** 后端契约形状（identity /api/auth/*，详见本仓 CONTEXT.md「对接契约」）。 */
 export interface ClientInfo {
@@ -13,6 +14,12 @@ export interface LoginInput extends AuthorizeParams {
 
 export interface LoginResult {
   redirectUrl: string
+}
+
+export interface RegisterInput extends AuthorizeParams {
+  /** 手机号/邮箱（注册页单输入框；按格式归类为后端 email/phone 字段）。 */
+  contact: string
+  password: string
 }
 
 /** 登录/注册请求失败：message 已是可直接内联展示的文案。status 缺失 = 网络异常。 */
@@ -37,6 +44,30 @@ export async function login(input: LoginInput): Promise<LoginResult> {
   }
   if (!hasRedirectUrl(body)) {
     throw new SsoApiError('登录失败，请稍后重试', status)
+  }
+  return { redirectUrl: body.redirectUrl }
+}
+
+/**
+ * 注册（注册即登录）：成功 200 {redirectUrl} + Set-Cookie（SSO 会话），顶层导航回业务应用。
+ * contact 在此归类为 email/phone 字段——无法归类时不发请求直接报错（UI 已即时校验，此为兜底）。
+ */
+export async function register(input: RegisterInput): Promise<LoginResult> {
+  const { contact, password, ...authorize } = input
+  const parsed = parseContact(contact)
+  if (!parsed) {
+    throw new SsoApiError('请输入正确的邮箱或手机号')
+  }
+  const { ok, status, body } = await requestJSON('/api/auth/register', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...authorize, [parsed.type]: parsed.value, password }),
+  })
+  if (!ok) {
+    throw new SsoApiError(registerErrorMessage(status, body), status)
+  }
+  if (!hasRedirectUrl(body)) {
+    throw new SsoApiError('注册失败，请稍后重试', status)
   }
   return { redirectUrl: body.redirectUrl }
 }
@@ -84,6 +115,18 @@ function loginErrorMessage(status: number, body: unknown): string {
   if (status === 401 && hasMessage(body)) return body.message
   if (status === 400) return '登录链接无效，请从应用进入'
   return '登录失败，请稍后重试'
+}
+
+/**
+ * 注册错误码 → 文案：
+ * - 409 冲突（邮箱/手机号已被使用）与 400 域校验错误（格式/联络方式缺失）按 {code,message} 采用后端文案
+ * - 400 OIDC 形状（{error,error_description}，client_id/redirect_uri 无效）→ 链接无效
+ * - 其余统一兜底，不把协议细节泄漏给用户
+ */
+function registerErrorMessage(status: number, body: unknown): string {
+  if ((status === 409 || status === 400) && hasMessage(body)) return body.message
+  if (status === 400) return '登录链接无效，请从应用进入'
+  return '注册失败，请稍后重试'
 }
 
 function hasMessage(body: unknown): body is { message: string } {
