@@ -3,24 +3,35 @@ import { describe, expect, it } from 'vitest'
 import { hasRegisterFormErrors, validateRegisterForm } from './register-form'
 
 describe('validateRegisterForm', () => {
-  it('accepts a valid email + matching passwords', () => {
+  it('accepts a valid email + code + matching passwords', () => {
     expect(
       validateRegisterForm({
         account: 'demo@aieducenter.com',
+        code: '246810',
         password: 'secret123',
         confirmPassword: 'secret123',
       }),
     ).toEqual({})
   })
 
-  it('accepts a valid phone + matching passwords', () => {
+  it('accepts a valid phone + code + matching passwords', () => {
     expect(
-      validateRegisterForm({ account: '13800138000', password: 'secret123', confirmPassword: 'secret123' }),
+      validateRegisterForm({
+        account: '13800138000',
+        code: '246810',
+        password: 'secret123',
+        confirmPassword: 'secret123',
+      }),
     ).toEqual({})
   })
 
   it('requires the contact (至少一联络方式)', () => {
-    const errors = validateRegisterForm({ account: '  ', password: 'secret123', confirmPassword: 'secret123' })
+    const errors = validateRegisterForm({
+      account: '  ',
+      code: '246810',
+      password: 'secret123',
+      confirmPassword: 'secret123',
+    })
 
     expect(errors.account).toBe('请填写邮箱或手机号')
   })
@@ -28,6 +39,7 @@ describe('validateRegisterForm', () => {
   it('rejects a contact that is neither email nor phone (格式)', () => {
     const errors = validateRegisterForm({
       account: 'not-a-contact',
+      code: '246810',
       password: 'secret123',
       confirmPassword: 'secret123',
     })
@@ -35,9 +47,32 @@ describe('validateRegisterForm', () => {
     expect(errors.account).toBe('请输入正确的邮箱或手机号')
   })
 
+  it('requires the verification code (必填)', () => {
+    const errors = validateRegisterForm({
+      account: 'demo@aieducenter.com',
+      code: '',
+      password: 'secret123',
+      confirmPassword: 'secret123',
+    })
+
+    expect(errors.code).toBe('请输入验证码')
+  })
+
+  it('does not gate the code on format/length (不做格式门，后端校验为准)', () => {
+    const errors = validateRegisterForm({
+      account: 'demo@aieducenter.com',
+      code: 'any-non-empty',
+      password: 'secret123',
+      confirmPassword: 'secret123',
+    })
+
+    expect(errors.code).toBeUndefined()
+  })
+
   it('requires a password (必填)', () => {
     const errors = validateRegisterForm({
       account: 'demo@aieducenter.com',
+      code: '246810',
       password: '',
       confirmPassword: '',
     })
@@ -48,6 +83,7 @@ describe('validateRegisterForm', () => {
   it('requires the confirm password', () => {
     const errors = validateRegisterForm({
       account: 'demo@aieducenter.com',
+      code: '246810',
       password: 'secret123',
       confirmPassword: '',
     })
@@ -58,6 +94,7 @@ describe('validateRegisterForm', () => {
   it('requires the two passwords to match (两次一致)', () => {
     const errors = validateRegisterForm({
       account: 'demo@aieducenter.com',
+      code: '246810',
       password: 'secret123',
       confirmPassword: 'secret456',
     })
@@ -66,10 +103,11 @@ describe('validateRegisterForm', () => {
   })
 
   it('accumulates multiple field errors', () => {
-    const errors = validateRegisterForm({ account: '', password: '', confirmPassword: '' })
+    const errors = validateRegisterForm({ account: '', code: '', password: '', confirmPassword: '' })
 
     expect(errors).toEqual({
       account: '请填写邮箱或手机号',
+      code: '请输入验证码',
       password: '请设置密码',
       confirmPassword: '请再次输入密码',
     })

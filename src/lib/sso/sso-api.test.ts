@@ -147,7 +147,7 @@ describe('login', () => {
 })
 
 describe('register', () => {
-  it('posts camelCase JSON with an email contact classified to the email field', async () => {
+  it('posts camelCase JSON with an email contact + emailCode', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       Response.json({ redirectUrl: 'http://demo.localhost:3000/callback?code=abc&state=abc' }),
     )
@@ -156,6 +156,7 @@ describe('register', () => {
     const result = await register({
       ...authorizeParams,
       contact: 'new@aieducenter.com',
+      code: '246810',
       password: 'secret123',
     })
 
@@ -172,17 +173,23 @@ describe('register', () => {
       nonce: 'xyz',
       scope: 'openid profile',
       email: 'new@aieducenter.com',
+      emailCode: '246810',
       password: 'secret123',
     })
   })
 
-  it('classifies a phone contact to the phone field', async () => {
+  it('classifies a phone contact to the phone field with phoneCode', async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValue(Response.json({ redirectUrl: 'http://demo.localhost:3000/callback?code=abc' }))
     vi.stubGlobal('fetch', fetchMock)
 
-    await register({ ...authorizeParams, contact: '13800138000', password: 'secret123' })
+    await register({
+      ...authorizeParams,
+      contact: '13800138000',
+      code: '246810',
+      password: 'secret123',
+    })
 
     const body = JSON.parse(fetchMock.mock.calls[0][1].body)
     expect(body).toEqual({
@@ -192,11 +199,12 @@ describe('register', () => {
       nonce: 'xyz',
       scope: 'openid profile',
       phone: '13800138000',
+      phoneCode: '246810',
       password: 'secret123',
     })
   })
 
-  it('adopts the backend message on 409 (contact already registered)', async () => {
+  it('routes 409 (already registered) to the contact field', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue(
@@ -204,16 +212,44 @@ describe('register', () => {
       ),
     )
 
-    const error = await register({ ...authorizeParams, contact: 'a@b.c', password: 'x' }).catch(
-      (e: unknown) => e,
-    )
+    const error = await register({
+      ...authorizeParams,
+      contact: 'a@b.c',
+      code: '246810',
+      password: 'x',
+    }).catch((e: unknown) => e)
 
     expect(error).toBeInstanceOf(SsoApiError)
     expect((error as SsoApiError).message).toBe('邮箱已被使用')
     expect((error as SsoApiError).status).toBe(409)
+    expect((error as SsoApiError).field).toBe('contact')
   })
 
-  it('adopts the backend message on 400 domain validation errors ({code,message})', async () => {
+  it('routes 400 domain errors (wrong/expired code) to the code field', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        Response.json({ code: 400, message: '验证码错误', data: null }, { status: 400 }),
+      ),
+    )
+
+    const error = await register({
+      ...authorizeParams,
+      contact: 'a@b.c',
+      code: '000000',
+      password: 'x',
+    }).catch((e: unknown) => e)
+
+    expect((error as SsoApiError).message).toBe('验证码错误')
+    expect((error as SsoApiError).status).toBe(400)
+    expect((error as SsoApiError).field).toBe('code')
+  })
+
+  it('routes ANY 400 domain error to the code field — known heuristic breadth (body has no business code)', async () => {
+    // 契约陷阱（CONTEXT.md「字段级错误映射」）：注册错误体只带 {code:<httpStatus>, message}，
+    // 无业务码字符串，故 400 域错误一律按 httpStatus 归 code。联络方式已由 parseContact 客户端预校验，
+    // 现实中的 400 即验码错/过期；但后端若新增其它 400 域错误（如密码强度不足、联络方式格式），
+    // 也会被归到 code 字段——已知局限，待后端在响应体暴露业务码后细化。
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue(
@@ -221,15 +257,18 @@ describe('register', () => {
       ),
     )
 
-    const error = await register({ ...authorizeParams, contact: '13800138000', password: 'x' }).catch(
-      (e: unknown) => e,
-    )
+    const error = await register({
+      ...authorizeParams,
+      contact: '13800138000',
+      code: '246810',
+      password: 'x',
+    }).catch((e: unknown) => e)
 
     expect((error as SsoApiError).message).toBe('手机号格式不正确')
-    expect((error as SsoApiError).status).toBe(400)
+    expect((error as SsoApiError).field).toBe('code')
   })
 
-  it('maps 400 in the OIDC shape (invalid client / redirect_uri) to the invalid-link copy', async () => {
+  it('maps 400 in the OIDC shape (invalid client / redirect_uri) to the invalid-link banner (no field)', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue(
@@ -240,44 +279,59 @@ describe('register', () => {
       ),
     )
 
-    const error = await register({ ...authorizeParams, contact: 'a@b.c', password: 'x' }).catch(
-      (e: unknown) => e,
-    )
+    const error = await register({
+      ...authorizeParams,
+      contact: 'a@b.c',
+      code: '246810',
+      password: 'x',
+    }).catch((e: unknown) => e)
 
     expect((error as SsoApiError).message).toBe('登录链接无效，请从应用进入')
     expect((error as SsoApiError).status).toBe(400)
+    expect((error as SsoApiError).field).toBeUndefined()
   })
 
-  it('maps network failures to a network copy (no status)', async () => {
+  it('maps network failures to a network copy (no status, no field)', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('fetch failed')))
 
-    const error = await register({ ...authorizeParams, contact: 'a@b.c', password: 'x' }).catch(
-      (e: unknown) => e,
-    )
+    const error = await register({
+      ...authorizeParams,
+      contact: 'a@b.c',
+      code: '246810',
+      password: 'x',
+    }).catch((e: unknown) => e)
 
     expect((error as SsoApiError).message).toBe('网络异常，请检查网络后重试')
     expect((error as SsoApiError).status).toBeUndefined()
+    expect((error as SsoApiError).field).toBeUndefined()
   })
 
-  it('falls back to a generic register copy on unexpected statuses (e.g. 500)', async () => {
+  it('falls back to a generic register banner on unexpected statuses (e.g. 500, no field)', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue(Response.json({ code: 500, message: 'Internal Server Error' }, { status: 500 })),
     )
 
-    const error = await register({ ...authorizeParams, contact: 'a@b.c', password: 'x' }).catch(
-      (e: unknown) => e,
-    )
+    const error = await register({
+      ...authorizeParams,
+      contact: 'a@b.c',
+      code: '246810',
+      password: 'x',
+    }).catch((e: unknown) => e)
 
     expect((error as SsoApiError).message).toBe('注册失败，请稍后重试')
+    expect((error as SsoApiError).field).toBeUndefined()
   })
 
   it('treats a 200 body without redirectUrl as a failure', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({ unexpected: true })))
 
-    const error = await register({ ...authorizeParams, contact: 'a@b.c', password: 'x' }).catch(
-      (e: unknown) => e,
-    )
+    const error = await register({
+      ...authorizeParams,
+      contact: 'a@b.c',
+      code: '246810',
+      password: 'x',
+    }).catch((e: unknown) => e)
 
     expect((error as SsoApiError).message).toBe('注册失败，请稍后重试')
   })
@@ -286,9 +340,12 @@ describe('register', () => {
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
 
-    const error = await register({ ...authorizeParams, contact: 'not-a-contact', password: 'x' }).catch(
-      (e: unknown) => e,
-    )
+    const error = await register({
+      ...authorizeParams,
+      contact: 'not-a-contact',
+      code: '246810',
+      password: 'x',
+    }).catch((e: unknown) => e)
 
     expect(error).toBeInstanceOf(SsoApiError)
     expect((error as SsoApiError).message).toBe('请输入正确的邮箱或手机号')

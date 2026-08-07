@@ -19,6 +19,8 @@ export interface LoginResult {
 export interface RegisterInput extends AuthorizeParams {
   /** 手机号/邮箱（注册页单输入框；按格式归类为后端 email/phone 字段）。 */
   contact: string
+  /** 动态验证码（提交时按联络方式归类为 emailCode/phoneCode；强制当场验码，见 ADR-0001）。 */
+  code: string
   password: string
 }
 
@@ -56,21 +58,23 @@ export async function login(input: LoginInput): Promise<LoginResult> {
 
 /**
  * 注册（注册即登录）：成功 200 {redirectUrl} + Set-Cookie（SSO 会话），顶层导航回业务应用。
- * contact 在此归类为 email/phone 字段——无法归类时不发请求直接报错（UI 已即时校验，此为兜底）。
+ * contact 归类为 email/phone 字段、code 归类为 emailCode/phoneCode——无法归类时不发请求直接报错（UI 已即时校验，此为兜底）。
+ * 强制当场验码（ADR-0001）：code 永远必填。
  */
 export async function register(input: RegisterInput): Promise<LoginResult> {
-  const { contact, password, ...authorize } = input
+  const { contact, code, password, ...authorize } = input
   const parsed = parseContact(contact)
   if (!parsed) {
     throw new SsoApiError('请输入正确的邮箱或手机号')
   }
+  const codeKey = parsed.type === 'email' ? 'emailCode' : 'phoneCode'
   const { ok, status, body } = await requestJSON('/api/auth/register', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...authorize, [parsed.type]: parsed.value, password }),
+    body: JSON.stringify({ ...authorize, [parsed.type]: parsed.value, [codeKey]: code, password }),
   })
   if (!ok) {
-    throw new SsoApiError(registerErrorMessage(status, body), status)
+    throw new SsoApiError(registerErrorMessage(status, body), status, registerErrorField(status, body))
   }
   if (!hasRedirectUrl(body)) {
     throw new SsoApiError('注册失败，请稍后重试', status)
@@ -78,8 +82,8 @@ export async function register(input: RegisterInput): Promise<LoginResult> {
   return { redirectUrl: body.redirectUrl }
 }
 
-/** 同源 /api/* 请求的公共形状：网络异常与 JSON 解析失败统一收敛。 */
-async function requestJSON(
+/** 同源 /api/* 请求的公共形状：网络异常与 JSON 解析失败统一收敛。裸体路径（login/register）与 ApiResponse 包装路径（verification-code）共用。 */
+export async function requestJSON(
   url: string,
   init?: RequestInit,
 ): Promise<{ ok: boolean; status: number; body: unknown }> {
@@ -135,7 +139,22 @@ function registerErrorMessage(status: number, body: unknown): string {
   return '注册失败，请稍后重试'
 }
 
-function hasMessage(body: unknown): body is { message: string } {
+/**
+ * 注册错误归属字段（用于字段级内联）。
+ * ⚠️ 契约陷阱：register 错误体只带 {code:<httpStatus>, message}，**不含业务码字符串**
+ * （ACCOUNT_007/008、VERIFICATION_CODE_INVALID 仅在后端枚举里，GlobalExceptionHandler 序列化时只放 httpStatus）。
+ * 故只能按 httpStatus + 是否 OIDC 形状路由：
+ * - 409 → contact（注册唯一 409 = 邮箱/手机号已被使用，ACCOUNT_007/008）
+ * - 400 域错误（有 message、非 OIDC）→ code（提交时联络方式已客户端校验，现实中的 400 即验证码错/过期）
+ * - 400 OIDC（{error}）/ 其余 → 不归属字段，走顶部横幅
+ */
+function registerErrorField(status: number, body: unknown): 'contact' | 'code' | undefined {
+  if (status === 409) return 'contact'
+  if (status === 400 && hasMessage(body)) return 'code'
+  return undefined
+}
+
+export function hasMessage(body: unknown): body is { message: string } {
   return (
     typeof body === 'object' &&
     body !== null &&

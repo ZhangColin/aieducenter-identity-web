@@ -7,10 +7,12 @@ export type SsoFlowStatus = 'idle' | 'submitting' | 'success' | 'error'
 
 /**
  * 提交值接缝：登录/注册共用一个状态机，故字段名按「联络方式」统一为 contact。
- * #7 注册接码起扩 code 字段（值对象成型，不再加位置参数）。
+ * code 为注册强制当场验码（ADR-0001）——密码登录不填（可选），注册页必填。
  */
 export interface SsoSubmitValues {
   contact: string
+  /** 动态验证码；密码登录不填，注册必填（register 动作归类为 emailCode/phoneCode）。 */
+  code?: string
   password: string
 }
 

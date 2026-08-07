@@ -4,6 +4,8 @@ import { parseContact } from './contact'
 export interface RegisterFormValues {
   /** 手机号/邮箱（单输入框，提交时由 sso-api 归类为 email/phone 字段）。 */
   account: string
+  /** 动态验证码（必填，不做格式门——长度/格式以后端校验为准）。 */
+  code: string
   password: string
   confirmPassword: string
 }
@@ -15,7 +17,7 @@ export type RegisterFormErrors = Partial<Record<RegisterFormField, string>>
 
 /**
  * 提交前即时校验：联络方式必填 + 格式（email/phone 至少其一由单输入框必填覆盖）、
- * 密码必填、两次密码一致。纯函数，UI 层按字段内联展示。
+ * 验证码必填（不做格式门）、密码必填、两次密码一致。纯函数，UI 层按字段内联展示。
  */
 export function validateRegisterForm(values: RegisterFormValues): RegisterFormErrors {
   const errors: RegisterFormErrors = {}
@@ -24,6 +26,10 @@ export function validateRegisterForm(values: RegisterFormValues): RegisterFormEr
     errors.account = '请填写邮箱或手机号'
   } else if (!parseContact(values.account)) {
     errors.account = '请输入正确的邮箱或手机号'
+  }
+
+  if (!values.code.trim()) {
+    errors.code = '请输入验证码'
   }
 
   if (!values.password) {

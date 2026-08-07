@@ -42,9 +42,13 @@ _Avoid_: 冷却
 登录页 → fetch POST /api/auth/login（JSON，同源经 Next rewrite；camelCase：clientId/redirectUri/state/nonce/scope/account/password）
   → 成功：200 {redirectUrl} + Set-Cookie(SSO 会话) → window.location 顶层导航回业务应用（#26 变更后）
   → 失败：{code,message}（凭据错 401 防枚举 / 停用 / 锁定）→ 内联展示，不刷新
-注册页 → fetch POST /api/auth/register（同上 + email/phone 至少其一 + password 必填，本期无验证码）
-  → 注册即登录（同 login 后半段）
+注册页 → fetch POST /api/auth/register（同上 + email/phone 至少其一 + **emailCode/phoneCode 必填（ADR-0001 强制当场验码）** + password 必填）
+  → 注册即登录（同 login 后半段）；错码 400 / 已注册 409 → 字段级内联（见下方陷阱）
+注册页 → fetch POST /api/account/verification-code/email `{email,purpose:'REGISTER'}`（**ApiResponse 包装**端点）
+  → 成功 `{code:200,message,data:{expireInSeconds,resentAfterSeconds}}` → 倒计时按 `resentAfterSeconds`（归一化为 cooldownSeconds）；429 限流体 `{code:429,message:"请60秒后再试"}` 无结构秒数
 ```
+
+> ⚠️ **字段级错误映射契约陷阱（#10 落地时确认，读 identity 后端源码）**：注册错误体只带 `{code:<httpStatus>, message, data:null}`，**不含业务码字符串**——`ACCOUNT_007/008`、`VERIFICATION_CODE_INVALID/EXPIRED` 仅存在于后端枚举，`GlobalExceptionHandler` 经 `ApiResponse.error(codeMessage)` 序列化时只把 `httpStatus` 放进 `$.code`。故前端字段路由只能按 httpStatus（`registerErrorField`）：**409→contact**（注册唯一 409 = 邮箱/手机号已被使用）、**400 域错误（有 `message`、非 OIDC `{error}`）→code**（提交时联络方式已客户端校验，现实 400 即验码错/过期）、**400 OIDC/其余→顶部横幅**。**已知局限**：后端若新增其它 400 域错误（如密码强度不足、联络方式格式），也会被归到 code 字段——待后端在响应体暴露业务码字符串后细化（届时改 `registerErrorField` 按 code 路由，回归这两条测试）。业务码↔httpStatus 对照见 identity `AccountError`/`VerificationCodeError`。
 
 > ⚠️ **契约冲突（2026-08-02 发现，#5 落地时）**：后端 #22 已落地，register 对提供的每个联络方式**强制当场验码**（缺码 400 CODE_INVALID）——与本期「无验证码」拍板冲突，无码提交在真实后端必 400。已提 [identity#28](https://github.com/ZhangColin/aieducenter-identity/issues/28) 待拍板（建议 dev 放行无码注册解锁联调）。#5 前端按原拍板实现（验证码元素隐藏），#6 注册链路验收前需 #28 有结论。
 
@@ -56,7 +60,8 @@ _Avoid_: 冷却
 | `POST /api/auth/register` | JSON + form 双吃 | **fetch JSON** |
 | `GET /api/auth/client-info?client_id=` | JSON 公开 | 登录/注册页查「登录到 XXX 应用」；只回 `{clientId, clientName}`（#24） |
 | `GET /logout` | 302 | 不调（业务应用发起，#19） |
-| `GET /api/captcha` · `POST /api/account/verification-code/*` | JSON | 本期(Phase 1)不接；**#7 起注册接码（[ADR-0001](docs/adr/0001-register-requires-verification-code.md)）** |
+| `POST /api/account/verification-code/email` | JSON（**ApiResponse 包装**） | **注册发码（#10）**：`sendEmailCode(email,'REGISTER')`，`resentAfterSeconds→cooldownSeconds` 归一化；429 限流无结构秒数 |
+| `GET /api/captcha` · `POST /api/account/verification-code/sms` · `/verify-code` | JSON | 本期不接（图形码 + 短信路径 #8 起接） |
 | `POST /token` · `/userinfo` · `/jwks` · `/discovery` | 机机 | 不调（消费方 BFF 直连） |
 | 短信登录 / 社交登录 / MFA | **未实现** | 后端尚无控制器 |
 
@@ -79,12 +84,15 @@ src/
 ├── app/login|register/page.tsx   # 薄：解析 searchParams → 组装 Screen
 ├── lib/sso/                      # ■ 稳定层（纯 TS，零样式）
 │   ├── authorize-params.ts       #   URL query 解析/校验/序列化（login↔register 互跳携带）
-│   ├── sso-api.ts                #   fetch 封装：clientInfo/login/register + 契约类型 + 错误码→文案
-│   └── use-sso-flow.ts           #   流程状态机：idle→submitting→success(window.location)/error
+│   ├── sso-api.ts                #   fetch 封装：clientInfo/login/register（带 emailCode）+ 契约类型 + 错误码→文案/字段（registerErrorField）
+│   ├── verification-code.ts      #   发码：ApiResponse 解包 + sendEmailCode（归一化 resentAfterSeconds→cooldownSeconds）
+│   ├── use-countdown.ts          #   倒计时原语（每秒递减、到 0 自停、卸载清理）
+│   ├── use-send-code.ts          #   发码状态机：idle/sending/sent/error + 持有冷却（组合 useCountdown）+ reset（换联络方式换桶）
+│   └── use-sso-flow.ts           #   提交流程状态机：idle→submitting→success(window.location)/error；SsoSubmitValues 含可选 code
 └── components/                   # □ 易变层（纯展示，不识 URL/fetch）
     ├── auth-shell.tsx            #   左右分栏壳 + 品牌区 + footer
     ├── login-screen.tsx          #   props: {clientName,isLoading,error,onSubmit,onNavigateRegister}
-    └── register-screen.tsx
+    └── register-screen.tsx       #   props: {clientName,isLoading,error,sendCode,onSubmit(account,password,code),onNavigateLogin}；sendCode 为 useSendCode 的视图投影（SendCodeControl），字段级错误按 error.field 内联
 ```
 - 流程状态用 React `useState` 收在 hook 内；**zustand 本期不引入**（单页单表单，无跨页状态）。
 - client-info 在页面 `useEffect` fetch；失败降级为不显示应用名，不阻断登录。
@@ -126,3 +134,4 @@ src/
 - 2026-08-02 拆票（to-tickets，3 片 tracer bullet）：[#4 登录页全链路](https://github.com/ZhangColin/aieducenter-identity-web/issues/4)（无阻塞，先行）→ [#5 注册页+互跳](https://github.com/ZhangColin/aieducenter-identity-web/issues/5)（blocked by #4）→ [#6 四进程端到端验收](https://github.com/ZhangColin/aieducenter-identity-web/issues/6)（blocked by #4/#5 + identity#26/#27）。frontier = #4。
 - 2026-08-02 #5 落地：稳定层扩 register（contact 归类 / register-form 校验 / sso-api register / use-sso-flow 注入 action / use-client-info 抽取）。发现后端 #22 已强制注册当场验码，与「本期无验证码」冲突 → 提 [identity#28](https://github.com/ZhangColin/aieducenter-identity/issues/28)（建议 dev 放行），并在 #6 登记阻塞。注册页裁剪元素：验证码、社交、服务协议勾选（协议文档未就位，footer 已有协议链接）。
 - 2026-08-07 [identity#28](https://github.com/ZhangColin/aieducenter-identity/issues/28) **c-revised** 拍板落档为本仓 [ADR-0001](docs/adr/0001-register-requires-verification-code.md)：推翻 Phase 1「注册无验证码」，注册强制当场验码（码永远必填、不做缺码放行、无 dev/prod 分叉）。驱动 [#7 注册接码](https://github.com/ZhangColin/aieducenter-identity-web/issues/7)（本期）+ [#8 登录验证码登录](https://github.com/ZhangColin/aieducenter-identity-web/issues/8)（复用 #7 图形码组件与发码封装）。术语表新增：图形验证码 / 动态验证码 / 目的 / 冷却 / 限流。
+- 2026-08-07 [#10 邮箱注册接码](https://github.com/ZhangColin/aieducenter-identity-web/issues/10)（#7 ②、#9 接缝之上）落地：稳定层新增 `verification-code.ts`（ApiResponse 解包 + sendEmailCode）/ `use-countdown.ts` / `use-send-code.ts`；register 带 `emailCode`、`registerErrorField` 按 httpStatus 字段路由；register-form 加 `code` 必填（不做格式门）；register-screen 加验证码输入 + 行内发码按钮（冷却倒计时、联络方式变更重置）。确认契约陷阱：注册错误体无业务码字符串 → 字段路由按 httpStatus（见上文「字段级错误映射契约陷阱」）。图形码 + 短信路径留 #8。

@@ -130,11 +130,17 @@ describe('useSsoFlow', () => {
     const { result } = renderHook(() => useSsoFlow(authorizeParams, { navigate, action }))
 
     await act(async () => {
-      await result.current.submit({ contact: 'new@aieducenter.com', password: 'secret123' })
+      await result.current.submit({
+        contact: 'new@aieducenter.com',
+        code: '246810',
+        password: 'secret123',
+      })
     })
 
+    // code 经值对象接缝透传到注册动作（注册强制当场验码，ADR-0001）
     expect(action).toHaveBeenCalledWith(authorizeParams, {
       contact: 'new@aieducenter.com',
+      code: '246810',
       password: 'secret123',
     })
     expect(result.current.status).toBe('success')
