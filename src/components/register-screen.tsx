@@ -2,22 +2,28 @@
 
 import { CircleAlert, Loader2, Lock, LockKeyhole, Network, ShieldCheck, User } from 'lucide-react'
 import type { FormEvent, ReactNode } from 'react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
+import { CaptchaField } from '@/components/captcha-field'
+import { fieldInputClass } from '@/components/field-input'
 import { parseContact } from '@/lib/sso/contact'
 import type { RegisterFormErrors, RegisterFormField } from '@/lib/sso/register-form'
 import { hasRegisterFormErrors, validateRegisterForm } from '@/lib/sso/register-form'
 import type { SsoApiError } from '@/lib/sso/sso-api'
-import type { SendCodeStatus } from '@/lib/sso/use-send-code'
+import type { CaptchaState, SendCodeStatus } from '@/lib/sso/use-send-code'
 import { cn } from '@/lib/utils'
 
-/** 发码控件：稳定层 useSendCode 的视图投影。UI 调 send(contact)/reset()，读 status/remainingSeconds/error。 */
+/** 发码控件：稳定层 useSendCode 的视图投影。UI 调 send(contact,captchaCode?)/fetchCaptcha()/reset()，读 status/remainingSeconds/error/captcha。 */
 export interface SendCodeControl {
   status: SendCodeStatus
   remainingSeconds: number
   error: string | null
-  send: (contact: string) => void
+  /** 手机分支需传图形码 captchaCode；邮箱忽略。 */
+  send: (contact: string, captchaCode?: string) => Promise<void>
   reset: () => void
+  /** 图形码态（手机分支）。 */
+  captcha: CaptchaState
+  fetchCaptcha: () => Promise<void>
 }
 
 export interface RegisterScreenProps {
@@ -48,6 +54,7 @@ export function RegisterScreen({
 }: RegisterScreenProps) {
   const [account, setAccount] = useState('')
   const [code, setCode] = useState('')
+  const [captchaCode, setCaptchaCode] = useState('')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [fieldErrors, setFieldErrors] = useState<RegisterFormErrors>({})
@@ -76,9 +83,26 @@ export function RegisterScreen({
   // 服务端字段错误已内联，仅无归属（OIDC/网络/5xx）时走顶部横幅
   const bannerError = error && !error.field ? error : null
 
-  const contactIsEmail = parseContact(account)?.type === 'email'
+  const contactType = parseContact(account)?.type
+  const isPhone = contactType === 'phone'
+  // 解构出稳定原语供 effect 依赖（sendCode.captcha 每渲染是新对象，整体入 deps 会触发循环）
+  const { image: captchaImage, isLoading: captchaLoading, error: captchaError } = sendCode.captcha
+  const { fetchCaptcha } = sendCode
+
+  // 判 phone 即取图形码（手机注册前置）；邮箱路径完全不出现图形码块。
+  // 取码失败后 error 置位，effect 不再自动重试，交由点图刷新（避免循环）。
+  useEffect(() => {
+    if (isPhone && !captchaImage && !captchaLoading && !captchaError) {
+      void fetchCaptcha()
+    }
+  }, [isPhone, captchaImage, captchaLoading, captchaError, fetchCaptcha])
+
+  // 发码启用：联络方式有效即可发；手机另需已取图形码 + 填了图形码（发短信前置校验 captchaCode）
   const sendDisabled =
-    sendCode.status === 'sending' || sendCode.remainingSeconds > 0 || !contactIsEmail
+    sendCode.status === 'sending' ||
+    sendCode.remainingSeconds > 0 ||
+    !contactType ||
+    (isPhone && (!captchaImage || !captchaCode.trim()))
   const sendLabel =
     sendCode.status === 'sending'
       ? '发送中…'
@@ -132,10 +156,21 @@ export function RegisterScreen({
             }}
             aria-invalid={!!accountError}
             aria-describedby={accountError ? 'account-error' : undefined}
-            className={inputClass(!!accountError)}
+            className={fieldInputClass(!!accountError)}
             placeholder="请输入手机号或邮箱"
           />
         </Field>
+
+        {isPhone && (
+          <CaptchaField
+            image={captchaImage}
+            isLoading={captchaLoading}
+            error={captchaError}
+            value={captchaCode}
+            onChange={setCaptchaCode}
+            onRefresh={() => void fetchCaptcha()}
+          />
+        )}
 
         <Field
           id="code"
@@ -156,12 +191,17 @@ export function RegisterScreen({
             }}
             aria-invalid={!!codeError}
             aria-describedby={codeError ? 'code-error' : undefined}
-            className={cn(inputClass(!!codeError), 'pr-32')}
+            className={cn(fieldInputClass(!!codeError), 'pr-32')}
             placeholder="请输入验证码"
           />
           <button
             type="button"
-            onClick={() => sendCode.send(account.trim())}
+            onClick={() => {
+              // 手机分支带图形码；邮箱忽略 captchaCode。发码后清空图形码输入（一次性，旧码已作废）
+              void sendCode
+                .send(account.trim(), captchaCode.trim())
+                .then(() => isPhone && setCaptchaCode(''))
+            }}
             disabled={sendDisabled}
             className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md px-3 py-1.5 text-sm font-semibold text-primary transition-colors hover:bg-primary/10 disabled:cursor-not-allowed disabled:text-slate-400 disabled:hover:bg-transparent dark:disabled:text-slate-500"
           >
@@ -188,7 +228,7 @@ export function RegisterScreen({
             }}
             aria-invalid={!!fieldErrors.password}
             aria-describedby={fieldErrors.password ? 'password-error' : undefined}
-            className={inputClass(!!fieldErrors.password)}
+            className={fieldInputClass(!!fieldErrors.password)}
             placeholder="8-20位字符，包含字母及数字"
           />
         </Field>
@@ -211,7 +251,7 @@ export function RegisterScreen({
             }}
             aria-invalid={!!fieldErrors.confirmPassword}
             aria-describedby={fieldErrors.confirmPassword ? 'confirmPassword-error' : undefined}
-            className={inputClass(!!fieldErrors.confirmPassword)}
+            className={fieldInputClass(!!fieldErrors.confirmPassword)}
             placeholder="请再次输入密码"
           />
         </Field>
@@ -239,15 +279,6 @@ export function RegisterScreen({
         </p>
       )}
     </div>
-  )
-}
-
-function inputClass(hasError: boolean): string {
-  return cn(
-    'w-full rounded-lg border bg-white py-3 pl-10 pr-4 text-slate-900 outline-none transition-all placeholder:text-slate-400 focus:ring-2 dark:bg-slate-800 dark:text-slate-100 dark:placeholder:text-slate-500',
-    hasError
-      ? 'border-red-300 focus:border-red-400 focus:ring-red-500/20 dark:border-red-800'
-      : 'border-slate-200 focus:border-primary focus:ring-primary/20 dark:border-slate-700',
   )
 }
 

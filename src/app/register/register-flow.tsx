@@ -13,7 +13,8 @@ import { useSsoFlow } from '@/lib/sso/use-sso-flow'
 
 /**
  * 注册页客户端组装：client-info 品牌查询（400 → 链接无效错误态；其余失败降级不阻断）
- * + useSsoFlow（注入 register 动作，提交带 emailCode）+ useSendCode（发码状态机 + 冷却，purpose=REGISTER）
+ * + useSsoFlow（注入 register 动作：邮箱带 emailCode / 手机带 phoneCode，已由 sso-api.register 归类）
+ * + useSendCode（发码状态机 + 冷却 + 手机分支图形码生命周期，purpose=REGISTER；默认 sendEmailCode/sendSmsCode/fetchCaptcha）
  * → RegisterScreen；「去登录」携带完整 authorize query 回 /login。
  */
 export function RegisterFlow({ authorizeParams }: { authorizeParams: AuthorizeParams }) {

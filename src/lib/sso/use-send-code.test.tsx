@@ -55,7 +55,7 @@ describe('useSendCode', () => {
     expect(send).toHaveBeenCalledWith('alice@example.com', 'LOGIN')
   })
 
-  it('transitions to error with the message on failure (no cooldown started)', async () => {
+  it('transitions to error and arms the cooldown from the message on rate limit (429)', async () => {
     const send = vi.fn().mockRejectedValue(new SsoApiError('请60秒后再试', 429))
     const { result } = renderHook(() => useSendCode({ send }))
 
@@ -65,6 +65,32 @@ describe('useSendCode', () => {
 
     expect(result.current.status).toBe('error')
     expect(result.current.error).toBe('请60秒后再试')
+    // 429 限流武装冷却：后端 429 体无结构化秒数，从 message 解析（见 CONTEXT.md 决策）
+    expect(result.current.remainingSeconds).toBe(60)
+  })
+
+  it('falls back to a default cooldown when the 429 message has no digits (IP throttle)', async () => {
+    const send = vi.fn().mockRejectedValue(new SsoApiError('发送次数过多，请稍后再试', 429))
+    const { result } = renderHook(() => useSendCode({ send }))
+
+    await act(async () => {
+      await result.current.send('alice@example.com')
+    })
+
+    expect(result.current.status).toBe('error')
+    expect(result.current.remainingSeconds).toBe(60)
+  })
+
+  it('does not arm cooldown on non-rate-limit errors (400)', async () => {
+    const send = vi.fn().mockRejectedValue(new SsoApiError('邮箱格式不正确', 400))
+    const { result } = renderHook(() => useSendCode({ send }))
+
+    await act(async () => {
+      await result.current.send('alice@example.com')
+    })
+
+    expect(result.current.status).toBe('error')
+    expect(result.current.error).toBe('邮箱格式不正确')
     expect(result.current.remainingSeconds).toBe(0)
   })
 
@@ -137,5 +163,138 @@ describe('useSendCode', () => {
     })
     expect(send).toHaveBeenLastCalledWith('bob@example.com', 'REGISTER')
     expect(result.current.status).toBe('sent')
+  })
+})
+
+describe('useSendCode — 图形码（手机分支）', () => {
+  it('fetchCaptcha loads the captcha image (phone path)', async () => {
+    const fetchCaptcha = vi
+      .fn()
+      .mockResolvedValue({ captchaId: 'cap-1', image: 'data:image/png;base64,AAA' })
+    const { result } = renderHook(() =>
+      useSendCode({ send: vi.fn(), sendSms: vi.fn(), fetchCaptcha }),
+    )
+
+    expect(result.current.captcha.image).toBeNull()
+    expect(result.current.captcha.isLoading).toBe(false)
+
+    await act(async () => {
+      await result.current.fetchCaptcha()
+    })
+
+    expect(fetchCaptcha).toHaveBeenCalledTimes(1)
+    expect(result.current.captcha.image).toBe('data:image/png;base64,AAA')
+    expect(result.current.captcha.isLoading).toBe(false)
+    expect(result.current.captcha.error).toBeNull()
+  })
+
+  it('phone send routes to sendSms with (phone, purpose, captchaId, captchaCode)', async () => {
+    const sendSms = vi.fn().mockResolvedValue(OK)
+    const fetchCaptcha = vi.fn().mockResolvedValue({ captchaId: 'cap-1', image: 'img' })
+    const { result } = renderHook(() =>
+      useSendCode({ send: vi.fn(), sendSms, fetchCaptcha }),
+    )
+
+    // 先取一张图形码（手机发码前置：判 phone 即取）
+    await act(async () => {
+      await result.current.fetchCaptcha()
+    })
+
+    await act(async () => {
+      await result.current.send('13800138000', 'qa58')
+    })
+
+    expect(sendSms).toHaveBeenCalledWith('13800138000', 'REGISTER', 'cap-1', 'qa58')
+    expect(result.current.status).toBe('sent')
+  })
+
+  it('phone send with CAPTCHA_INVALID (400) routes the error to the captcha field', async () => {
+    const sendSms = vi.fn().mockRejectedValue(new SsoApiError('图形验证码错误', 400))
+    const fetchCaptcha = vi.fn().mockResolvedValue({ captchaId: 'cap-1', image: 'img' })
+    const { result } = renderHook(() =>
+      useSendCode({ send: vi.fn(), sendSms, fetchCaptcha }),
+    )
+
+    await act(async () => {
+      await result.current.fetchCaptcha()
+    })
+    await act(async () => {
+      await result.current.send('13800138000', 'WRONG')
+    })
+
+    expect(result.current.captcha.error).toBe('图形验证码错误')
+    // OTP 发码错误位保持干净（限流/网络才进 error）
+    expect(result.current.error).toBeNull()
+  })
+
+  it('refetches a fresh captcha after every phone send attempt (one-time contract)', async () => {
+    const sendSms = vi.fn().mockResolvedValue(OK)
+    const fetchCaptcha = vi.fn().mockResolvedValue({ captchaId: 'cap-1', image: 'img' })
+    const { result } = renderHook(() =>
+      useSendCode({ send: vi.fn(), sendSms, fetchCaptcha }),
+    )
+
+    await act(async () => {
+      await result.current.fetchCaptcha()
+    })
+    expect(fetchCaptcha).toHaveBeenCalledTimes(1)
+
+    // 成功发码后自动重取（captcha 已被后端 verifyAndDelete 消费）
+    await act(async () => {
+      await result.current.send('13800138000', 'qa58')
+    })
+    expect(fetchCaptcha).toHaveBeenCalledTimes(2)
+    expect(result.current.status).toBe('sent')
+
+    // 冷却到期前重发被忽略（不触发又一次重取）
+    await act(async () => {
+      await result.current.send('13800138000', 'qa58')
+    })
+    expect(fetchCaptcha).toHaveBeenCalledTimes(2)
+
+    // 冷却到期后才可重发 → 用首次发码后自动重取的那张图形码，发码后又重取
+    await act(async () => {
+      vi.advanceTimersByTime(60000)
+    })
+    expect(result.current.remainingSeconds).toBe(0)
+
+    await act(async () => {
+      await result.current.send('13800138000', 'qa58')
+    })
+    expect(fetchCaptcha).toHaveBeenCalledTimes(3)
+  })
+
+  it('reset() clears the captcha (contact switches email↔phone)', async () => {
+    const fetchCaptcha = vi.fn().mockResolvedValue({ captchaId: 'cap-1', image: 'img' })
+    const { result } = renderHook(() =>
+      useSendCode({ send: vi.fn(), sendSms: vi.fn(), fetchCaptcha }),
+    )
+
+    await act(async () => {
+      await result.current.fetchCaptcha()
+    })
+    expect(result.current.captcha.image).toBe('img')
+
+    act(() => result.current.reset())
+    expect(result.current.captcha.image).toBeNull()
+    expect(result.current.captcha.error).toBeNull()
+  })
+
+  it('phone send without a loaded captcha sets captchaError and does not get stuck sending', async () => {
+    const sendSms = vi.fn().mockResolvedValue(OK)
+    const fetchCaptcha = vi.fn().mockResolvedValue({ captchaId: 'cap-1', image: 'img' })
+    const { result } = renderHook(() =>
+      useSendCode({ send: vi.fn(), sendSms, fetchCaptcha }),
+    )
+
+    // 未先取图形码 → captchaId 缺失（UI 正常不会到这，此为兜底）
+    await act(async () => {
+      await result.current.send('13800138000', 'qa58')
+    })
+
+    expect(sendSms).not.toHaveBeenCalled()
+    expect(result.current.captcha.error).toBe('请先获取图形验证码')
+    // 关键：不卡在 'sending'（早返回在进入 'sending' 之前）
+    expect(result.current.status).toBe('idle')
   })
 })

@@ -17,6 +17,15 @@ export interface SendCodeResult {
   cooldownSeconds: number
 }
 
+/**
+ * 图形验证码（一次性）：后端返回 base64 图片（带 data-url 前缀）+ captchaId。
+ * captchaId 用于发短信时配套校验，校验即作废（见 sendSmsCode）。
+ */
+export interface Captcha {
+  captchaId: string
+  image: string
+}
+
 /** 后端 ApiResponse 包装形状（code=HTTP 状态码；成功 data 载荷，错误 data=null）。 */
 interface ApiResponse<T> {
   code: number
@@ -42,6 +51,43 @@ export async function sendEmailCode(
   }
   const data = unwrapData<{ expireInSeconds: number; resentAfterSeconds: number }>(body)
   return { expireInSeconds: data.expireInSeconds, cooldownSeconds: data.resentAfterSeconds }
+}
+
+/**
+ * 发送短信验证码（`POST /api/account/verification-code/sms`，ApiResponse 包装端点）。
+ * 短信路径需先解一张**一次性**图形码：后端 `verifyAndDelete` 在此调用内消费 captchaId/captchaCode，
+ * 故每次发码（成功/失败）后调用方都必须重取新图形码（见 use-send-code 的手机分支生命周期）。
+ * 成功解包 data 并归一化为 `{expireInSeconds, cooldownSeconds}`；失败抛 SsoApiError
+ * （429 限流 / 400 域错误：CAPTCHA_INVALID·CAPTCHA_EXPIRED·手机号格式 / 网络）。
+ */
+export async function sendSmsCode(
+  phone: string,
+  purpose: VerificationPurpose,
+  captchaId: string,
+  captchaCode: string,
+): Promise<SendCodeResult> {
+  const { ok, status, body } = await requestJSON('/api/account/verification-code/sms', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ phone, purpose, captchaId, captchaCode }),
+  })
+  if (!ok) {
+    throw new SsoApiError(sendCodeErrorMessage(status, body), status)
+  }
+  const data = unwrapData<{ expireInSeconds: number; resentAfterSeconds: number }>(body)
+  return { expireInSeconds: data.expireInSeconds, cooldownSeconds: data.resentAfterSeconds }
+}
+
+/**
+ * 获取图形验证码（`GET /api/captcha`，ApiResponse 包装端点）。
+ * 成功解包 data 为 `{captchaId, image}`；失败抛 SsoApiError（网络/非 200）。captchaId 为一次性，发短信时消费。
+ */
+export async function fetchCaptcha(): Promise<Captcha> {
+  const { ok, status, body } = await requestJSON('/api/captcha', { method: 'GET' })
+  if (!ok) {
+    throw new SsoApiError('图形验证码获取失败，请刷新重试', status)
+  }
+  return unwrapData<Captcha>(body)
 }
 
 /**

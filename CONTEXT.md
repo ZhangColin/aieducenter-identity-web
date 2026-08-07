@@ -61,7 +61,9 @@ _Avoid_: 冷却
 | `GET /api/auth/client-info?client_id=` | JSON 公开 | 登录/注册页查「登录到 XXX 应用」；只回 `{clientId, clientName}`（#24） |
 | `GET /logout` | 302 | 不调（业务应用发起，#19） |
 | `POST /api/account/verification-code/email` | JSON（**ApiResponse 包装**） | **注册发码（#10）**：`sendEmailCode(email,'REGISTER')`，`resentAfterSeconds→cooldownSeconds` 归一化；429 限流无结构秒数 |
-| `GET /api/captcha` · `POST /api/account/verification-code/sms` · `/verify-code` | JSON | 本期不接（图形码 + 短信路径 #8 起接） |
+| `GET /api/captcha` | JSON（**ApiResponse 包装**） | **注册手机发码（#11）**：`fetchCaptcha()` → `{captchaId, image(base64 data-url)}`；一次性，发短信时被后端 `verifyAndDelete` 消费 |
+| `POST /api/account/verification-code/sms` | JSON（**ApiResponse 包装**） | **注册手机发码（#11）**：`sendSmsCode(phone,'REGISTER',captchaId,captchaCode)`；成功 `{expireInSeconds,resentAfterSeconds}`→归一化 cooldownSeconds；429 限流 / 400 CAPTCHA_INVALID·CAPTCHA_EXPIRED·手机号格式 |
+| `POST /api/account/verify-code` | JSON | 本期不接（邮箱校验在后端 register 内联消费） |
 | `POST /token` · `/userinfo` · `/jwks` · `/discovery` | 机机 | 不调（消费方 BFF 直连） |
 | 短信登录 / 社交登录 / MFA | **未实现** | 后端尚无控制器 |
 
@@ -135,3 +137,4 @@ src/
 - 2026-08-02 #5 落地：稳定层扩 register（contact 归类 / register-form 校验 / sso-api register / use-sso-flow 注入 action / use-client-info 抽取）。发现后端 #22 已强制注册当场验码，与「本期无验证码」冲突 → 提 [identity#28](https://github.com/ZhangColin/aieducenter-identity/issues/28)（建议 dev 放行），并在 #6 登记阻塞。注册页裁剪元素：验证码、社交、服务协议勾选（协议文档未就位，footer 已有协议链接）。
 - 2026-08-07 [identity#28](https://github.com/ZhangColin/aieducenter-identity/issues/28) **c-revised** 拍板落档为本仓 [ADR-0001](docs/adr/0001-register-requires-verification-code.md)：推翻 Phase 1「注册无验证码」，注册强制当场验码（码永远必填、不做缺码放行、无 dev/prod 分叉）。驱动 [#7 注册接码](https://github.com/ZhangColin/aieducenter-identity-web/issues/7)（本期）+ [#8 登录验证码登录](https://github.com/ZhangColin/aieducenter-identity-web/issues/8)（复用 #7 图形码组件与发码封装）。术语表新增：图形验证码 / 动态验证码 / 目的 / 冷却 / 限流。
 - 2026-08-07 [#10 邮箱注册接码](https://github.com/ZhangColin/aieducenter-identity-web/issues/10)（#7 ②、#9 接缝之上）落地：稳定层新增 `verification-code.ts`（ApiResponse 解包 + sendEmailCode）/ `use-countdown.ts` / `use-send-code.ts`；register 带 `emailCode`、`registerErrorField` 按 httpStatus 字段路由；register-form 加 `code` 必填（不做格式门）；register-screen 加验证码输入 + 行内发码按钮（冷却倒计时、联络方式变更重置）。确认契约陷阱：注册错误体无业务码字符串 → 字段路由按 httpStatus（见上文「字段级错误映射契约陷阱」）。图形码 + 短信路径留 #8。
+- 2026-08-07 [#11 手机注册接码](https://github.com/Zhangcolin/aieducenter-identity-web/issues/11)（#7 ③）落地：稳定层扩 `verification-code.ts`（`fetchCaptcha` / `sendSmsCode`）+ `use-send-code.ts` 手机分支（持有图形码态、一次性重取、429 武装冷却）；新增 `captcha-field` 纯展示组件；register-screen 判 phone 条件渲染图形码块（邮箱路径完全不出现）；register 手机分支带 `phoneCode`（#5 已就绪，零回归）。**图形码一次性生命周期**（后端 `verifyAndDelete` 在发短信内消费）：判 phone 即取 → 每次发 sms 尝试（成功/失败）后自动重取新 captchaId → 吃 `CAPTCHA_INVALID`/`CAPTCHA_EXPIRED`(400) 进图形码区 + 自动重取（保留错因文案）→ 保留点图刷新。**429 武装冷却决策（用户拍 A）**：register 页 email/phone 共用单 `useSendCode` 实例，429 一律武装冷却（email 同享，已更新 #10「429 不武装」那条刻意断言）；后端 429 体无结构化秒数，前端暂从 message 解析（`请60秒后再试`→60、无数字 fallback 60），已提 [identity#34](https://github.com/ZhangColin/aieducenter-identity/issues/34) 暴露结构化 `retryAfterSeconds` 后移除解析。`CAPTCHA_*` 进图形码区、`VERIFICATION_RATE_LIMIT_*`(429) 进发码按钮旁 + 武装冷却。
