@@ -73,7 +73,7 @@ export function RegisterScreen({
     const errors = validateRegisterForm({ account, code, password, confirmPassword })
     setFieldErrors(errors)
     if (hasRegisterFormErrors(errors)) return
-    onSubmit(account.trim(), code.trim(), password)
+    onSubmit(account.trim(), password, code.trim())
   }
 
   // 字段级错误优先级：服务端字段错误 > 客户端校验错误（二者不同时出现——客户端校验通过才提交）
