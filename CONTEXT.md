@@ -3,6 +3,23 @@
 > 统一登录前端（应用层·平台自带应用）：identity 身份服务的唯一 UI（login.company.com）。登录 / 注册 / 社交登录 / MFA / 登出。
 > 架构不变式见 CLAUDE.md「平台架构上下文」；本文件记录**本项目自己的**对接契约与设计演进。
 
+## Language（术语表）
+
+**图形验证码（Captcha）**：区分人机的**图片**校验题，**一次性**（校验即失效，不可复用）。与「动态验证码」是两个不同概念，不可混称「验证码」。
+_Avoid_: 验证码（歧义）、图片码
+
+**动态验证码（Verification Code / OTP）**：发送到邮箱或手机的**一次性数字码**，绑【目的】、有时效。注册/登录提交时凭它证明对该联络方式的持有。
+_Avoid_: 验证码（歧义）、短信码/邮箱码
+
+**目的（Purpose）**：动态验证码的绑定上下文（`REGISTER`/`LOGIN`/`RESET_PASSWORD`）；**跨目的不可复用**——注册码不能用于登录。
+_Avoid_: 用途
+
+**冷却（Cooldown）**：发码成功后对**同一联络方式**的重发锁定窗口；改联络方式即换桶、冷却重置。与【限流】不同：那是节流，这是成功后的自锁。
+_Avoid_: 限流
+
+**限流（Rate Limit）**：发码请求的节流策略（按联络方式或按 IP），触发返 429；前端把其响应时长当作冷却处理。
+_Avoid_: 冷却
+
 ## 设计原则（用户定，2026-08-02）
 
 1. **SSO 整体（含前后端）提供的能力，对应用对接越简单越好**——应用侧配置面 dev/prod 同构、只换 base URL；复杂泄漏给应用就会出问题。
@@ -39,7 +56,7 @@
 | `POST /api/auth/register` | JSON + form 双吃 | **fetch JSON** |
 | `GET /api/auth/client-info?client_id=` | JSON 公开 | 登录/注册页查「登录到 XXX 应用」；只回 `{clientId, clientName}`（#24） |
 | `GET /logout` | 302 | 不调（业务应用发起，#19） |
-| `GET /api/captcha` · `POST /api/account/verification-code/*` | JSON | 本期不接（#22 才进登录/注册链路） |
+| `GET /api/captcha` · `POST /api/account/verification-code/*` | JSON | 本期(Phase 1)不接；**#7 起注册接码（[ADR-0001](docs/adr/0001-register-requires-verification-code.md)）** |
 | `POST /token` · `/userinfo` · `/jwks` · `/discovery` | 机机 | 不调（消费方 BFF 直连） |
 | 短信登录 / 社交登录 / MFA | **未实现** | 后端尚无控制器 |
 
@@ -108,3 +125,4 @@ src/
 - 2026-08-02 PRD 发布为本仓 [issue #3](https://github.com/ZhangColin/aieducenter-identity-web/issues/3)（`ready-for-agent`）；后端阻塞项 identity#26（契约）、identity#27（local 配置）。
 - 2026-08-02 拆票（to-tickets，3 片 tracer bullet）：[#4 登录页全链路](https://github.com/ZhangColin/aieducenter-identity-web/issues/4)（无阻塞，先行）→ [#5 注册页+互跳](https://github.com/ZhangColin/aieducenter-identity-web/issues/5)（blocked by #4）→ [#6 四进程端到端验收](https://github.com/ZhangColin/aieducenter-identity-web/issues/6)（blocked by #4/#5 + identity#26/#27）。frontier = #4。
 - 2026-08-02 #5 落地：稳定层扩 register（contact 归类 / register-form 校验 / sso-api register / use-sso-flow 注入 action / use-client-info 抽取）。发现后端 #22 已强制注册当场验码，与「本期无验证码」冲突 → 提 [identity#28](https://github.com/ZhangColin/aieducenter-identity/issues/28)（建议 dev 放行），并在 #6 登记阻塞。注册页裁剪元素：验证码、社交、服务协议勾选（协议文档未就位，footer 已有协议链接）。
+- 2026-08-07 [identity#28](https://github.com/ZhangColin/aieducenter-identity/issues/28) **c-revised** 拍板落档为本仓 [ADR-0001](docs/adr/0001-register-requires-verification-code.md)：推翻 Phase 1「注册无验证码」，注册强制当场验码（码永远必填、不做缺码放行、无 dev/prod 分叉）。驱动 [#7 注册接码](https://github.com/ZhangColin/aieducenter-identity-web/issues/7)（本期）+ [#8 登录验证码登录](https://github.com/ZhangColin/aieducenter-identity-web/issues/8)（复用 #7 图形码组件与发码封装）。术语表新增：图形验证码 / 动态验证码 / 目的 / 冷却 / 限流。
