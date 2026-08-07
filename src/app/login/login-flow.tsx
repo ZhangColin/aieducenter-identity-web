@@ -26,7 +26,7 @@ export function LoginFlow({ authorizeParams }: { authorizeParams: AuthorizeParam
       isLoading={status === 'submitting'}
       error={error}
       onSubmit={(account, password) => {
-        void submit(account, password)
+        void submit({ contact: account, password })
       }}
       onNavigateRegister={() => {
         router.push(`/register?${serializeAuthorizeParams(authorizeParams)}`)

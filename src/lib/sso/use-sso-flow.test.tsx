@@ -38,7 +38,7 @@ describe('useSsoFlow', () => {
 
     let submitted!: Promise<void>
     act(() => {
-      submitted = result.current.submit('demo@aieducenter.com', 'demo12345')
+      submitted = result.current.submit({ contact: 'demo@aieducenter.com', password: 'demo12345' })
     })
     expect(result.current.status).toBe('submitting')
 
@@ -63,11 +63,13 @@ describe('useSsoFlow', () => {
     const { result } = renderHook(() => useSsoFlow(authorizeParams, { navigate }))
 
     await act(async () => {
-      await result.current.submit('demo@aieducenter.com', 'wrong')
+      await result.current.submit({ contact: 'demo@aieducenter.com', password: 'wrong' })
     })
 
     expect(result.current.status).toBe('error')
-    expect(result.current.error).toBe('账号或密码错误')
+    expect(result.current.error).toBeInstanceOf(SsoApiError)
+    expect(result.current.error?.message).toBe('账号或密码错误')
+    expect(result.current.error?.field).toBeUndefined()
     expect(navigate).not.toHaveBeenCalled()
   })
 
@@ -84,8 +86,8 @@ describe('useSsoFlow', () => {
 
     let first!: Promise<void>
     act(() => {
-      first = result.current.submit('demo@aieducenter.com', 'demo12345')
-      void result.current.submit('demo@aieducenter.com', 'demo12345')
+      first = result.current.submit({ contact: 'demo@aieducenter.com', password: 'demo12345' })
+      void result.current.submit({ contact: 'demo@aieducenter.com', password: 'demo12345' })
     })
     await act(async () => {
       resolveFetch(Response.json({ redirectUrl: 'http://demo.localhost:3000/callback?code=abc' }))
@@ -107,12 +109,12 @@ describe('useSsoFlow', () => {
     const { result } = renderHook(() => useSsoFlow(authorizeParams, { navigate }))
 
     await act(async () => {
-      await result.current.submit('demo@aieducenter.com', 'wrong')
+      await result.current.submit({ contact: 'demo@aieducenter.com', password: 'wrong' })
     })
     expect(result.current.status).toBe('error')
 
     await act(async () => {
-      await result.current.submit('demo@aieducenter.com', 'demo12345')
+      await result.current.submit({ contact: 'demo@aieducenter.com', password: 'demo12345' })
     })
 
     expect(result.current.status).toBe('success')
@@ -128,10 +130,13 @@ describe('useSsoFlow', () => {
     const { result } = renderHook(() => useSsoFlow(authorizeParams, { navigate, action }))
 
     await act(async () => {
-      await result.current.submit('new@aieducenter.com', 'secret123')
+      await result.current.submit({ contact: 'new@aieducenter.com', password: 'secret123' })
     })
 
-    expect(action).toHaveBeenCalledWith(authorizeParams, 'new@aieducenter.com', 'secret123')
+    expect(action).toHaveBeenCalledWith(authorizeParams, {
+      contact: 'new@aieducenter.com',
+      password: 'secret123',
+    })
     expect(result.current.status).toBe('success')
     expect(navigate).toHaveBeenCalledWith('http://demo.localhost:3000/callback?code=abc')
   })
@@ -142,11 +147,11 @@ describe('useSsoFlow', () => {
     const { result } = renderHook(() => useSsoFlow(authorizeParams, { navigate, action }))
 
     await act(async () => {
-      await result.current.submit('a@b.c', 'x')
+      await result.current.submit({ contact: 'a@b.c', password: 'x' })
     })
 
     expect(result.current.status).toBe('error')
-    expect(result.current.error).toBe('邮箱已被使用')
+    expect(result.current.error?.message).toBe('邮箱已被使用')
     expect(navigate).not.toHaveBeenCalled()
   })
 
@@ -155,10 +160,10 @@ describe('useSsoFlow', () => {
     const { result } = renderHook(() => useSsoFlow(authorizeParams, { navigate: vi.fn(), action }))
 
     await act(async () => {
-      await result.current.submit('a@b.c', 'x')
+      await result.current.submit({ contact: 'a@b.c', password: 'x' })
     })
 
     expect(result.current.status).toBe('error')
-    expect(result.current.error).toBe('操作失败，请稍后重试')
+    expect(result.current.error?.message).toBe('操作失败，请稍后重试')
   })
 })

@@ -1,19 +1,27 @@
 import { useCallback, useRef, useState } from 'react'
 
 import type { AuthorizeParams } from './authorize-params'
-import { login, type LoginResult } from './sso-api'
+import { SsoApiError, login, type LoginResult } from './sso-api'
 
 export type SsoFlowStatus = 'idle' | 'submitting' | 'success' | 'error'
+
+/**
+ * 提交值接缝：登录/注册共用一个状态机，故字段名按「联络方式」统一为 contact。
+ * #7 注册接码起扩 code 字段（值对象成型，不再加位置参数）。
+ */
+export interface SsoSubmitValues {
+  contact: string
+  password: string
+}
 
 /** 提交动作：登录页默认密码登录，注册页注入 register（同一状态机复用）。 */
 export type SsoSubmitAction = (
   authorizeParams: AuthorizeParams,
-  account: string,
-  password: string,
+  values: SsoSubmitValues,
 ) => Promise<LoginResult>
 
-const loginAction: SsoSubmitAction = (authorizeParams, account, password) =>
-  login({ ...authorizeParams, account, password })
+const loginAction: SsoSubmitAction = (authorizeParams, { contact, password }) =>
+  login({ ...authorizeParams, account: contact, password })
 
 export interface SsoFlowDeps {
   /** 成功后顶层导航回业务应用；默认 window.location（测试注入）。 */
@@ -24,21 +32,21 @@ export interface SsoFlowDeps {
 
 export interface SsoFlow {
   status: SsoFlowStatus
-  /** 可内联展示的失败文案；无错误为 null。 */
-  error: string | null
-  submit: (account: string, password: string) => Promise<void>
+  /** 提交失败：message 可直接内联展示、field 预留字段级错误（本期恒 undefined）；无错误为 null。 */
+  error: SsoApiError | null
+  submit: (values: SsoSubmitValues) => Promise<void>
 }
 
 /** 登录/注册流程状态机：idle → submitting → success（顶层导航）/ error（内联文案，可重试）。 */
 export function useSsoFlow(authorizeParams: AuthorizeParams, deps?: SsoFlowDeps): SsoFlow {
   const [status, setStatus] = useState<SsoFlowStatus>('idle')
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<SsoApiError | null>(null)
   const submittingRef = useRef(false)
   const navigate = deps?.navigate
   const action = deps?.action ?? loginAction
 
   const submit = useCallback(
-    async (account: string, password: string) => {
+    async (values: SsoSubmitValues) => {
       if (submittingRef.current) return
       submittingRef.current = true
       setStatus('submitting')
@@ -47,17 +55,23 @@ export function useSsoFlow(authorizeParams: AuthorizeParams, deps?: SsoFlowDeps)
         window.location.href = url
       })
       try {
-        const { redirectUrl } = await action(authorizeParams, account, password)
+        const { redirectUrl } = await action(authorizeParams, values)
         setStatus('success')
         go(redirectUrl)
       } catch (e) {
         submittingRef.current = false
         setStatus('error')
-        setError(e instanceof Error ? e.message : '操作失败，请稍后重试')
+        setError(toSsoApiError(e))
       }
     },
     [authorizeParams, navigate, action],
   )
 
   return { status, error, submit }
+}
+
+/** 把 action 抛出的任意值收敛为 SsoApiError：SsoApiError 原样透传，其余取 message（非 Error 走兜底文案）。 */
+function toSsoApiError(e: unknown): SsoApiError {
+  if (e instanceof SsoApiError) return e
+  return new SsoApiError(e instanceof Error ? e.message : '操作失败，请稍后重试')
 }

@@ -3,12 +3,14 @@
 import { CircleAlert, Eye, EyeOff, Loader2, Lock, Network, User } from 'lucide-react'
 import { useState } from 'react'
 
+import type { SsoApiError } from '@/lib/sso/sso-api'
+
 export interface LoginScreenProps {
   /** client-info 提供的应用名；查询失败时不传（降级不显示，不阻断登录）。 */
   clientName?: string
   isLoading: boolean
-  /** 内联错误文案（错密码/停用/锁定/网络异常等）；null 表示无错误。 */
-  error: string | null
+  /** 内联错误（错密码/停用/锁定/网络异常等）；本期 field 恒 undefined → 整体横幅；null 表示无错误。 */
+  error: SsoApiError | null
   onSubmit: (account: string, password: string) => void
   /** 传入才渲染「立即注册」入口（注册互跳由后续 ticket 接入）。 */
   onNavigateRegister?: () => void
@@ -51,7 +53,7 @@ export function LoginScreen({
           className="mb-6 flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600 dark:border-red-900/50 dark:bg-red-950/50 dark:text-red-400"
         >
           <CircleAlert className="size-4 shrink-0" aria-hidden />
-          {error}
+          {error.message}
         </div>
       )}
 

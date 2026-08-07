@@ -25,11 +25,17 @@ export interface RegisterInput extends AuthorizeParams {
 /** 登录/注册请求失败：message 已是可直接内联展示的文案。status 缺失 = 网络异常。 */
 export class SsoApiError extends Error {
   readonly status?: number
+  /**
+   * 错误归属字段（contact/code），用于字段级内联错误。
+   * 本期（#9 prefactor）恒 undefined——预留，#7 注册接码起才由发码/提交链路设置。
+   */
+  readonly field?: 'contact' | 'code' | null
 
-  constructor(message: string, status?: number) {
+  constructor(message: string, status?: number, field?: 'contact' | 'code' | null) {
     super(message)
     this.name = 'SsoApiError'
     this.status = status
+    this.field = field
   }
 }
 

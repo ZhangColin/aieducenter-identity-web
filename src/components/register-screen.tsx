@@ -6,14 +6,15 @@ import { useState } from 'react'
 
 import type { RegisterFormErrors, RegisterFormField } from '@/lib/sso/register-form'
 import { hasRegisterFormErrors, validateRegisterForm } from '@/lib/sso/register-form'
+import type { SsoApiError } from '@/lib/sso/sso-api'
 import { cn } from '@/lib/utils'
 
 export interface RegisterScreenProps {
   /** client-info 提供的应用名；查询失败时不传（降级不显示，不阻断注册）。 */
   clientName?: string
   isLoading: boolean
-  /** 内联错误文案（409 冲突/校验错误/网络异常等）；null 表示无错误。 */
-  error: string | null
+  /** 内联错误（409 冲突/校验错误/网络异常等）；本期 field 恒 undefined → 整体横幅；null 表示无错误。 */
+  error: SsoApiError | null
   onSubmit: (account: string, password: string) => void
   /** 传入才渲染「已有账号？立即登录」入口。 */
   onNavigateLogin?: () => void
@@ -74,7 +75,7 @@ export function RegisterScreen({
           className="mb-6 flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600 dark:border-red-900/50 dark:bg-red-950/50 dark:text-red-400"
         >
           <CircleAlert className="size-4 shrink-0" aria-hidden />
-          {error}
+          {error.message}
         </div>
       )}
 

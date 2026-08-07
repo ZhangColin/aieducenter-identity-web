@@ -18,7 +18,7 @@ export function RegisterFlow({ authorizeParams }: { authorizeParams: AuthorizePa
   const router = useRouter()
   const { clientName, invalidLink } = useClientInfo(authorizeParams.clientId)
   const { status, error, submit } = useSsoFlow(authorizeParams, {
-    action: (params, account, password) => register({ ...params, contact: account, password }),
+    action: (params, { contact, password }) => register({ ...params, contact, password }),
   })
 
   if (invalidLink) return <InvalidLinkNotice />
@@ -29,7 +29,7 @@ export function RegisterFlow({ authorizeParams }: { authorizeParams: AuthorizePa
       isLoading={status === 'submitting'}
       error={error}
       onSubmit={(account, password) => {
-        void submit(account, password)
+        void submit({ contact: account, password })
       }}
       onNavigateLogin={() => {
         router.push(`/login?${serializeAuthorizeParams(authorizeParams)}`)
