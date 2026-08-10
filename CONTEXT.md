@@ -83,7 +83,7 @@ _Avoid_: 冷却
 ### 代码分层（接缝 = props/callbacks）
 ```
 src/
-├── app/login|register/page.tsx   # 薄：解析 searchParams → 组装 Screen
+├── app/login|register|error/page.tsx   # 薄：解析 searchParams → 组装 Screen
 ├── lib/sso/                      # ■ 稳定层（纯 TS，零样式）
 │   ├── authorize-params.ts       #   URL query 解析/校验/序列化（login↔register 互跳携带）
 │   ├── sso-api.ts                #   fetch 封装：clientInfo/login/register（带 emailCode）+ 契约类型 + 错误码→文案/字段（registerErrorField）
@@ -141,3 +141,4 @@ src/
 
 - 2026-08-07 #11 四进程 e2e（浏览器实测）：手机注册全链路绿——判 phone→图形码出现/加载、点图刷新换新 captchaId、错图形码→内联图形码区+自动重取、`qa58` 发码成功+冷却倒计时+一次性重取（OTP `246810` 落 Redis 实证）、register 带 phoneCode 返 `200`+发 code+种 SSO 会话（二次免登实证）。**e2e 暴露并修 #10 遗留 bug**：register-screen `handleSubmit` 调 `onSubmit(account, code, password)` 与 props 签名 `(account, password, code)` 第 2/3 参颠倒 → phoneCode/password 互换（后端 400「验证码错误」）；UI 层不测故单测未覆盖，e2e 才暴露，已修。**遗留（非 #11、非 identity-web）**：demo BFF 换 token `exchange_failed`——普通登录（demo@aieducenter.com）同样失败，是 demo / identity `/token` 端问题，阻塞验收 checklist「登录/注册即登录回 demo」最后一跳，已提 [identity#35](https://github.com/ZhangColin/aieducenter-identity/issues/35)。**已解决（2026-08-07）**：根因为 demo client 在 app-registry 的 `grants` 缺 `authorization_code`（/token 返 `unauthorized_client "client 未授权该 grant_type"`，非 identity-web / 非 demo-backend 换 token 逻辑）；identity 给 demo client 配上 grant 后，四进程 e2e 全绿——普通登录与手机注册即登录均回 demo 已登录（实测注册即登录：新账号 userId 即时登入 demo）。
 - 2026-08-10 Phase 1 收口（[#6](https://github.com/ZhangColin/aieducenter-identity-web/issues/6) / [#3](https://github.com/ZhangColin/aieducenter-identity-web/issues/3)）：checklist 1-3 四进程真机实测通过、5 错误态稳定层单测覆盖 + 手机路径 e2e；登出（4）属 demo RP-initiated（identity-web 无登出 UI，见范围），验证步骤归兄弟仓 `local-sso-debugging.md` / identity#38。identity-web 侧 Phase 1 功能（登录 / 注册 / 邮箱+手机接码闭环 + 品牌显示 + 内联错误 + 二次免登）完成；[#8 登录验证码登录](https://github.com/ZhangColin/aieducenter-identity-web/issues/8) 为后续。
+- 2026-08-10 [#12 /error 兜底路由](https://github.com/ZhangColin/aieducenter-identity-web/issues/12)（identity #39 前置 / ADR-0006 跳转目标）落地：identity 后端 `/authorize`、`/logout` 出错 302 跳此页。薄路由 `app/error/page.tsx` 解析 `?error&error_description&client_id`（仅取 `client_id`，error/error_description 在路由边界丢弃、不透传给用户）→ 客户端 `error-flow` → `ErrorScreen` 套 `AuthShell`（视觉参照 `InvalidLinkNotice`，圆形图标+标题+文案）。稳定层新增 `error-notice.ts`（文案决策：clientName 在→「请回到「X」重新发起登录」，缺失/失败→通用兜底）+ `use-client-name.ts`（**不复用 `useClientInfo`**——其 400→invalidLink 是登录页专用语义；错误页任意失败含 400/404/网络/5xx/空一律降级 undefined，页面照常渲染不崩）。**无可点外链**（BFF 选项 1，纯引导文案），可作独立目的地直达（不依赖前置导航状态）。稳定层单测覆盖（只测 `lib/sso/`）。
