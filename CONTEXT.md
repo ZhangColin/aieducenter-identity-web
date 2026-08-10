@@ -116,12 +116,12 @@ src/
 
 **端到端验证 = identity 仓现有 demo**（不新建、不另提 demo issue；要改就改它）。demo 是真实消费方（真 BFF/服务端换 token/登出按钮），之前唯一不真的地方是 IdP 侧 dev-login 兜底——那正是本项目要补的。注册流程经登录页「立即注册」链接进入，demo 零改动。
 
-**验收 checklist**（四进程：identity + demo-backend + demo-web + identity-web）：
-1. 首次登录：demo 点登录 → 落 `:10002/login` → `demo@aieducenter.com / demo12345` → 回 demo 显示用户
-2. 二次免登：清 demo 业务 cookie 再登录 → 不出现登录页直接进
-3. 注册：登录页点「立即注册」→ 新账号注册 → 注册即登录回 demo
-4. 登出：demo 登出按钮 → 再登录需重新输密码
-5. 错误态：错密码 → 内联报错不刷新；缺 client_id 直开 `/login` → 「登录链接无效」错误页
+**验收 checklist**（四进程：identity + demo-backend + demo-web + identity-web）——**Phase 1 收口（2026-08-10）**：
+1. ✅ 首次登录：demo 点登录 → 落 `:10002/login` → `demo@aieducenter.com / demo12345` → 回 demo 显示用户〔2026-08-07 四进程实测〕
+2. ✅ 二次免登：清 demo 业务 cookie 再登录 → 不出现登录页直接进〔实测：SSO 会话 host-only cookie 种下〕
+3. ✅ 注册：登录页点「立即注册」→ 新账号注册 → 注册即登录回 demo〔2026-08-07 实测：新账号 userId 即时登入 demo〕
+4. 登出：demo 登出按钮 → 再登录需重新输密码〔登出属 demo RP-initiated，identity-web 无登出 UI（见范围），验证步骤在兄弟仓 `docs/guide/local-sso-debugging.md` / identity#38〕
+5. ✅ 错误态：错密码 → 内联报错不刷新；缺 client_id 直开 `/login` →「登录链接无效」错误页〔稳定层单测覆盖：401→防枚举文案、parseAuthorizeParams 缺 client_id→null→InvalidLinkNotice；手机注册错图形码已 e2e 实测〕
 
 **自动化**：引入 vitest，**只测稳定层** `lib/sso/`（authorize-params / 错误映射 / sso-api mock fetch）；UI 层不测（要改版，分离原则的红利）。
 
@@ -140,3 +140,4 @@ src/
 - 2026-08-07 [#11 手机注册接码](https://github.com/Zhangcolin/aieducenter-identity-web/issues/11)（#7 ③）落地：稳定层扩 `verification-code.ts`（`fetchCaptcha` / `sendSmsCode`）+ `use-send-code.ts` 手机分支（持有图形码态、一次性重取、429 武装冷却）；新增 `captcha-field` 纯展示组件；register-screen 判 phone 条件渲染图形码块（邮箱路径完全不出现）；register 手机分支带 `phoneCode`（#5 已就绪，零回归）。**图形码一次性生命周期**（后端 `verifyAndDelete` 在发短信内消费）：判 phone 即取 → 每次发 sms 尝试（成功/失败）后自动重取新 captchaId → 吃 `CAPTCHA_INVALID`/`CAPTCHA_EXPIRED`(400) 进图形码区 + 自动重取（保留错因文案）→ 保留点图刷新。**429 武装冷却决策（用户拍 A）**：register 页 email/phone 共用单 `useSendCode` 实例，429 一律武装冷却（email 同享，已更新 #10「429 不武装」那条刻意断言）；后端 429 体无结构化秒数，前端暂从 message 解析（`请60秒后再试`→60、无数字 fallback 60），已提 [identity#34](https://github.com/ZhangColin/aieducenter-identity/issues/34) 暴露结构化 `retryAfterSeconds` 后移除解析。`CAPTCHA_*` 进图形码区、`VERIFICATION_RATE_LIMIT_*`(429) 进发码按钮旁 + 武装冷却。
 
 - 2026-08-07 #11 四进程 e2e（浏览器实测）：手机注册全链路绿——判 phone→图形码出现/加载、点图刷新换新 captchaId、错图形码→内联图形码区+自动重取、`qa58` 发码成功+冷却倒计时+一次性重取（OTP `246810` 落 Redis 实证）、register 带 phoneCode 返 `200`+发 code+种 SSO 会话（二次免登实证）。**e2e 暴露并修 #10 遗留 bug**：register-screen `handleSubmit` 调 `onSubmit(account, code, password)` 与 props 签名 `(account, password, code)` 第 2/3 参颠倒 → phoneCode/password 互换（后端 400「验证码错误」）；UI 层不测故单测未覆盖，e2e 才暴露，已修。**遗留（非 #11、非 identity-web）**：demo BFF 换 token `exchange_failed`——普通登录（demo@aieducenter.com）同样失败，是 demo / identity `/token` 端问题，阻塞验收 checklist「登录/注册即登录回 demo」最后一跳，已提 [identity#35](https://github.com/ZhangColin/aieducenter-identity/issues/35)。**已解决（2026-08-07）**：根因为 demo client 在 app-registry 的 `grants` 缺 `authorization_code`（/token 返 `unauthorized_client "client 未授权该 grant_type"`，非 identity-web / 非 demo-backend 换 token 逻辑）；identity 给 demo client 配上 grant 后，四进程 e2e 全绿——普通登录与手机注册即登录均回 demo 已登录（实测注册即登录：新账号 userId 即时登入 demo）。
+- 2026-08-10 Phase 1 收口（[#6](https://github.com/ZhangColin/aieducenter-identity-web/issues/6) / [#3](https://github.com/ZhangColin/aieducenter-identity-web/issues/3)）：checklist 1-3 四进程真机实测通过、5 错误态稳定层单测覆盖 + 手机路径 e2e；登出（4）属 demo RP-initiated（identity-web 无登出 UI，见范围），验证步骤归兄弟仓 `local-sso-debugging.md` / identity#38。identity-web 侧 Phase 1 功能（登录 / 注册 / 邮箱+手机接码闭环 + 品牌显示 + 内联错误 + 二次免登）完成；[#8 登录验证码登录](https://github.com/ZhangColin/aieducenter-identity-web/issues/8) 为后续。
