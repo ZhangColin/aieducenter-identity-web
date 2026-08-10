@@ -22,8 +22,8 @@ export function RegisterFlow({ authorizeParams }: { authorizeParams: AuthorizePa
   const { clientName, invalidLink } = useClientInfo(authorizeParams.clientId)
   const { status, error, submit } = useSsoFlow(authorizeParams, {
     action: (params, { contact, password, code }) =>
-      // 表单已强制 code 必填，此处 ?? '' 仅为类型桥接（防御）
-      register({ ...params, contact, password, code: code ?? '' }),
+      // 表单已强制 code/password 必填，此处 ?? '' 仅为类型桥接（防御）
+      register({ ...params, contact, password: password ?? '', code: code ?? '' }),
   })
   const sendCode = useSendCode({ purpose: 'REGISTER' })
 

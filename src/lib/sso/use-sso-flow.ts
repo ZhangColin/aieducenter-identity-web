@@ -6,24 +6,27 @@ import { SsoApiError, login, type LoginResult } from './sso-api'
 export type SsoFlowStatus = 'idle' | 'submitting' | 'success' | 'error'
 
 /**
- * 提交值接缝：登录/注册共用一个状态机，故字段名按「联络方式」统一为 contact。
- * code 为注册强制当场验码（ADR-0001）——密码登录不填（可选），注册页必填。
+ * 提交值接缝：登录/注册/验证码登录共用一个状态机，故字段名按「联络方式」统一为 contact。
+ * - contact：恒填（三种登录方式的账号）
+ * - code：注册（归类 emailCode/phoneCode）与验证码登录（account+code）必填；密码登录不填
+ * - password：密码登录与注册必填；验证码登录无密码（不填）
  */
 export interface SsoSubmitValues {
   contact: string
-  /** 动态验证码；密码登录不填，注册必填（register 动作归类为 emailCode/phoneCode）。 */
+  /** 动态验证码；密码登录不填，注册（归类 emailCode/phoneCode）与验证码登录必填。 */
   code?: string
-  password: string
+  /** 密码；密码登录与注册必填，验证码登录无密码（不填）。 */
+  password?: string
 }
 
-/** 提交动作：登录页默认密码登录，注册页注入 register（同一状态机复用）。 */
+/** 提交动作：登录页默认密码登录，注册页/验证码登录注入各自动作（同一状态机复用）。 */
 export type SsoSubmitAction = (
   authorizeParams: AuthorizeParams,
   values: SsoSubmitValues,
 ) => Promise<LoginResult>
 
 const loginAction: SsoSubmitAction = (authorizeParams, { contact, password }) =>
-  login({ ...authorizeParams, account: contact, password })
+  login({ ...authorizeParams, account: contact, password: password ?? '' })
 
 export interface SsoFlowDeps {
   /** 成功后顶层导航回业务应用；默认 window.location（测试注入）。 */

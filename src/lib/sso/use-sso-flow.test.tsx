@@ -147,6 +147,27 @@ describe('useSsoFlow', () => {
     expect(navigate).toHaveBeenCalledWith('http://demo.localhost:3000/callback?code=abc')
   })
 
+  it('runs the injected login-code action with a passwordless submit (no password field)', async () => {
+    // 验证码登录（#8）：SsoSubmitValues 只带 contact + code（password 省略），动作照常收到并导航。
+    // 守住「password 可选」这一类型变更不破坏提交（登录方式切换的稳定层接缝，UI 不测）。
+    const action = vi
+      .fn()
+      .mockResolvedValue({ redirectUrl: 'http://demo.localhost:3000/callback?code=abc' })
+    const navigate = vi.fn()
+    const { result } = renderHook(() => useSsoFlow(authorizeParams, { navigate, action }))
+
+    await act(async () => {
+      await result.current.submit({ contact: 'demo@aieducenter.com', code: '246810' })
+    })
+
+    expect(action).toHaveBeenCalledWith(authorizeParams, {
+      contact: 'demo@aieducenter.com',
+      code: '246810',
+    })
+    expect(result.current.status).toBe('success')
+    expect(navigate).toHaveBeenCalledWith('http://demo.localhost:3000/callback?code=abc')
+  })
+
   it('surfaces the injected action’s error message inline', async () => {
     const action = vi.fn().mockRejectedValue(new SsoApiError('邮箱已被使用', 409))
     const navigate = vi.fn()

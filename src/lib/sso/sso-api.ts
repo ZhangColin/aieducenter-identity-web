@@ -16,6 +16,17 @@ export interface LoginResult {
   redirectUrl: string
 }
 
+/**
+ * 验证码登录请求（`/api/auth/login-code`，issue #8）。
+ * 与 login 同一契约：account 单字段（后端按 `@` 区分邮箱/手机，前端不拆）、code 单字段。
+ * authorize 上下文全链路透传（与 login/register 一致）。
+ */
+export interface LoginCodeInput extends AuthorizeParams {
+  account: string
+  /** 动态验证码（purpose=LOGIN，发码与提交绑定同一目的）。 */
+  code: string
+}
+
 export interface RegisterInput extends AuthorizeParams {
   /** 手机号/邮箱（注册页单输入框；按格式归类为后端 email/phone 字段）。 */
   contact: string
@@ -49,6 +60,31 @@ export async function login(input: LoginInput): Promise<LoginResult> {
   })
   if (!ok) {
     throw new SsoApiError(loginErrorMessage(status, body), status)
+  }
+  if (!hasRedirectUrl(body)) {
+    throw new SsoApiError('登录失败，请稍后重试', status)
+  }
+  return { redirectUrl: body.redirectUrl }
+}
+
+/**
+ * 验证码登录（注册即登录的后半段同构）：成功 200 {redirectUrl} + Set-Cookie（SSO 会话），顶层导航回业务应用。
+ * 与 login 同一契约——account 单字段（后端按 `@` 区分邮箱/手机）、code 单字段，前端不做 email/phone 拆分。
+ * 防枚举：错码与账号不存在后端返同一 400 CODE_INVALID，前端同字段（code）同文案内联，不区分（见 loginCodeErrorField）。
+ */
+export async function loginByCode(input: LoginCodeInput): Promise<LoginResult> {
+  const { account, code, ...authorize } = input
+  const { ok, status, body } = await requestJSON('/api/auth/login-code', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...authorize, account, code }),
+  })
+  if (!ok) {
+    throw new SsoApiError(
+      loginCodeErrorMessage(status, body),
+      status,
+      loginCodeErrorField(status, body),
+    )
   }
   if (!hasRedirectUrl(body)) {
     throw new SsoApiError('登录失败，请稍后重试', status)
@@ -150,6 +186,29 @@ function registerErrorMessage(status: number, body: unknown): string {
  */
 function registerErrorField(status: number, body: unknown): 'contact' | 'code' | undefined {
   if (status === 409) return 'contact'
+  if (status === 400 && hasMessage(body)) return 'code'
+  return undefined
+}
+
+/**
+ * 验证码登录错误码 → 文案：
+ * - 400 域错误（CODE_INVALID/EXPIRED/ALREADY_USED）与 401 停用/锁定 采用后端 message
+ * - 400 OIDC 形状（{error,error_description}，client_id/redirect_uri 无效）→ 链接无效
+ * - 其余统一兜底，不泄漏协议细节
+ */
+function loginCodeErrorMessage(status: number, body: unknown): string {
+  if ((status === 400 || status === 401) && hasMessage(body)) return body.message
+  if (status === 400) return '登录链接无效，请从应用进入'
+  return '登录失败，请稍后重试'
+}
+
+/**
+ * 验证码登录错误归属字段（用于字段级内联）。
+ * 防枚举（后端已保证，前端文案对齐）：错码与「账号不存在」后端返同一 400 CODE_INVALID（同 status/message），
+ * 故 400 域错误一律归 code 字段——同一文案同一字段，不暴露账号存在性。停用/锁定（401，验码通过后告知）
+ * 与 OIDC/网络/5xx 走顶部横幅，不归属字段。
+ */
+function loginCodeErrorField(status: number, body: unknown): 'code' | undefined {
   if (status === 400 && hasMessage(body)) return 'code'
   return undefined
 }

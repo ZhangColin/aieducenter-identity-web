@@ -42,6 +42,9 @@ _Avoid_: 冷却
 登录页 → fetch POST /api/auth/login（JSON，同源经 Next rewrite；camelCase：clientId/redirectUri/state/nonce/scope/account/password）
   → 成功：200 {redirectUrl} + Set-Cookie(SSO 会话) → window.location 顶层导航回业务应用（#26 变更后）
   → 失败：{code,message}（凭据错 401 防枚举 / 停用 / 锁定）→ 内联展示，不刷新
+登录页（验证码登录 tab）→ fetch POST /api/auth/login-code（与 /login 同契约：account 单字段 + code 单字段，不拆 email/phone；authorize 透传）
+  → 成功：200 {redirectUrl} + Set-Cookie → 顶层导航回业务应用
+  → 失败：防枚举——错码与「账号不存在」后端同一 400 CODE_INVALID（同 status/message）→ 验证码字段内联同一文案；停用/锁定（401，验码通过后告知）/ OIDC / 网络 → 顶部横幅
 注册页 → fetch POST /api/auth/register（同上 + email/phone 至少其一 + **emailCode/phoneCode 必填（ADR-0001 强制当场验码）** + password 必填）
   → 注册即登录（同 login 后半段）；错码 400 / 已注册 409 → 字段级内联（见下方陷阱）
 注册页 → fetch POST /api/account/verification-code/email `{email,purpose:'REGISTER'}`（**ApiResponse 包装**端点）
@@ -57,6 +60,7 @@ _Avoid_: 冷却
 |---|---|---|
 | `GET /authorize` | 302 状态机 | 不调（消费方入口） |
 | `POST /api/auth/login` | JSON + form 双吃 | **fetch JSON**（form 变体 #23 不用） |
+| `POST /api/auth/login-code` | JSON + form 双吃 | **验证码登录（#8）fetch JSON**：`{...authorize, account, code}`（account 单字段、code 单字段，与 /login 同契约）；成功 200 {redirectUrl}；防枚举错码/账号不存在同一 400 CODE_INVALID → code 字段、停用/锁定 401 → 横幅 |
 | `POST /api/auth/register` | JSON + form 双吃 | **fetch JSON** |
 | `GET /api/auth/client-info?client_id=` | JSON 公开 | 登录/注册页查「登录到 XXX 应用」；只回 `{clientId, clientName}`（#24） |
 | `GET /logout` | 302 | 不调（业务应用发起，#19） |
@@ -65,7 +69,7 @@ _Avoid_: 冷却
 | `POST /api/account/verification-code/sms` | JSON（**ApiResponse 包装**） | **注册手机发码（#11）**：`sendSmsCode(phone,'REGISTER',captchaId,captchaCode)`；成功 `{expireInSeconds,resentAfterSeconds}`→归一化 cooldownSeconds；429 限流 / 400 CAPTCHA_INVALID·CAPTCHA_EXPIRED·手机号格式 |
 | `POST /api/account/verify-code` | JSON | 本期不接（邮箱校验在后端 register 内联消费） |
 | `POST /token` · `/userinfo` · `/jwks` · `/discovery` | 机机 | 不调（消费方 BFF 直连） |
-| 短信登录 / 社交登录 / MFA | **未实现** | 后端尚无控制器 |
+| 社交登录 / MFA | **未实现** | 后端尚无控制器 |
 
 ### 提交方式（2026-08-02 拍板）：同源 fetch + JSON，弃用 form 顶层提交
 - **成功**：`200 {redirectUrl}`（Set-Cookie 种 SSO 会话）→ `window.location.href` 顶层导航——**跨站最后一跳仍是浏览器导航，「零跨域 fetch」不变式成立**（fetch 仅同源）。
@@ -86,14 +90,14 @@ src/
 ├── app/login|register|error/page.tsx   # 薄：解析 searchParams → 组装 Screen
 ├── lib/sso/                      # ■ 稳定层（纯 TS，零样式）
 │   ├── authorize-params.ts       #   URL query 解析/校验/序列化（login↔register 互跳携带）
-│   ├── sso-api.ts                #   fetch 封装：clientInfo/login/register（带 emailCode）+ 契约类型 + 错误码→文案/字段（registerErrorField）
+│   ├── sso-api.ts                #   fetch 封装：clientInfo/login/login-code/register（带 emailCode）+ 契约类型 + 错误码→文案/字段（registerErrorField / loginCodeErrorField）
 │   ├── verification-code.ts      #   发码：ApiResponse 解包 + sendEmailCode（归一化 resentAfterSeconds→cooldownSeconds）
 │   ├── use-countdown.ts          #   倒计时原语（每秒递减、到 0 自停、卸载清理）
 │   ├── use-send-code.ts          #   发码状态机：idle/sending/sent/error + 持有冷却（组合 useCountdown）+ reset（换联络方式换桶）
-│   └── use-sso-flow.ts           #   提交流程状态机：idle→submitting→success(window.location)/error；SsoSubmitValues 含可选 code
+│   └── use-sso-flow.ts           #   提交流程状态机：idle→submitting→success(window.location)/error；SsoSubmitValues：contact 恒填 + 可选 code/password（密码登录/注册/验证码登录共用）
 └── components/                   # □ 易变层（纯展示，不识 URL/fetch）
     ├── auth-shell.tsx            #   左右分栏壳 + 品牌区 + footer
-    ├── login-screen.tsx          #   props: {clientName,isLoading,error,onSubmit,onNavigateRegister}
+    ├── login-screen.tsx          #   props: {clientName,mode,onModeChange,isLoading,error,onSubmit,sendCode,onCodeSubmit,onNavigateRegister}；tab 切换密码/验证码登录，账号字段跨方式共享，验证码登录复用 CaptchaField+useSendCode
     └── register-screen.tsx       #   props: {clientName,isLoading,error,sendCode,onSubmit(account,password,code),onNavigateLogin}；sendCode 为 useSendCode 的视图投影（SendCodeControl），字段级错误按 error.field 内联
 ```
 - 流程状态用 React `useState` 收在 hook 内；**zustand 本期不引入**（单页单表单，无跨页状态）。
@@ -142,3 +146,4 @@ src/
 - 2026-08-07 #11 四进程 e2e（浏览器实测）：手机注册全链路绿——判 phone→图形码出现/加载、点图刷新换新 captchaId、错图形码→内联图形码区+自动重取、`qa58` 发码成功+冷却倒计时+一次性重取（OTP `246810` 落 Redis 实证）、register 带 phoneCode 返 `200`+发 code+种 SSO 会话（二次免登实证）。**e2e 暴露并修 #10 遗留 bug**：register-screen `handleSubmit` 调 `onSubmit(account, code, password)` 与 props 签名 `(account, password, code)` 第 2/3 参颠倒 → phoneCode/password 互换（后端 400「验证码错误」）；UI 层不测故单测未覆盖，e2e 才暴露，已修。**遗留（非 #11、非 identity-web）**：demo BFF 换 token `exchange_failed`——普通登录（demo@aieducenter.com）同样失败，是 demo / identity `/token` 端问题，阻塞验收 checklist「登录/注册即登录回 demo」最后一跳，已提 [identity#35](https://github.com/ZhangColin/aieducenter-identity/issues/35)。**已解决（2026-08-07）**：根因为 demo client 在 app-registry 的 `grants` 缺 `authorization_code`（/token 返 `unauthorized_client "client 未授权该 grant_type"`，非 identity-web / 非 demo-backend 换 token 逻辑）；identity 给 demo client 配上 grant 后，四进程 e2e 全绿——普通登录与手机注册即登录均回 demo 已登录（实测注册即登录：新账号 userId 即时登入 demo）。
 - 2026-08-10 Phase 1 收口（[#6](https://github.com/ZhangColin/aieducenter-identity-web/issues/6) / [#3](https://github.com/ZhangColin/aieducenter-identity-web/issues/3)）：checklist 1-3 四进程真机实测通过、5 错误态稳定层单测覆盖 + 手机路径 e2e；登出（4）属 demo RP-initiated（identity-web 无登出 UI，见范围），验证步骤归兄弟仓 `local-sso-debugging.md` / identity#38。identity-web 侧 Phase 1 功能（登录 / 注册 / 邮箱+手机接码闭环 + 品牌显示 + 内联错误 + 二次免登）完成；[#8 登录验证码登录](https://github.com/ZhangColin/aieducenter-identity-web/issues/8) 为后续。
 - 2026-08-10 [#12 /error 兜底路由](https://github.com/ZhangColin/aieducenter-identity-web/issues/12)（identity #39 前置 / ADR-0006 跳转目标）落地：identity 后端 `/authorize`、`/logout` 出错 302 跳此页。薄路由 `app/error/page.tsx` 解析 `?error&error_description&client_id`（仅取 `client_id`，error/error_description 在路由边界丢弃、不透传给用户）→ 客户端 `error-flow` → `ErrorScreen` 套 `AuthShell`（视觉参照 `InvalidLinkNotice`，圆形图标+标题+文案）。稳定层新增 `error-notice.ts`（文案决策：clientName 在→「请回到「X」重新发起登录」，缺失/失败→通用兜底）+ `use-client-name.ts`（**不复用 `useClientInfo`**——其 400→invalidLink 是登录页专用语义；错误页任意失败含 400/404/网络/5xx/空一律降级 undefined，页面照常渲染不崩）。**无可点外链**（BFF 选项 1，纯引导文案），可作独立目的地直达（不依赖前置导航状态）。稳定层单测覆盖（只测 `lib/sso/`）。
+- 2026-08-10 [#8 登录页验证码登录](https://github.com/ZhangColin/aieducenter-identity-web/issues/8)（复用 #7 图形码组件 + 发码封装）落地：登录页加「验证码登录」tab，与密码登录并存切换；账号字段跨方式共享。**复用 #7 零重建**：`CaptchaField`（手机发码前置图形码）+ `useSendCode`（purpose=LOGIN，与注册 REGISTER 分键）原样复用，本票只换 purpose。**稳定层新增 `loginByCode()`**：`POST /api/auth/login-code` 与 `/login` 同契约——`{...authorize, account, code}` 单字段（后端按 `@` 区分邮箱/手机，前端不拆 email/phone，区别于 register），成功 200 {redirectUrl}。**错误映射 `loginCodeErrorField`**：防枚举核心——错码与「账号不存在」后端同一 400 CODE_INVALID（status/message 完全一致）→ 前端同归 `code` 字段同文案，不区分；停用/锁定（401，验码通过后告知）+ OIDC + 网络/5xx → 顶部横幅（不归属字段）。`SsoSubmitValues.password` 改可选（验证码登录无密码），login/register 动作 `?? ''` 类型桥接（真实路径恒有值，零行为变更）。**两登录方式各持独立 `useSsoFlow`**（密码=默认 login 动作 / 验证码=注入 loginByCode 动作），账号共享、状态互不串。密码登录 JSX 原样保留（回归无损）。稳定层单测覆盖 `loginByCode` 封装 + 错误映射 + 防枚举（10 例）；UI 层不测（分离原则）。e2e（四进程 + dev 固定码 qa58/246810）待验收 checklist。
