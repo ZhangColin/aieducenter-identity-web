@@ -36,7 +36,7 @@ export interface CaptchaState {
 
 export interface UseSendCode {
   status: SendCodeStatus
-  /** 冷却剩余秒数（组合 useCountdown）；0 表示可重发。成功发码与 429 限流都会武装。 */
+  /** 冷却剩余秒数（组合 useCountdown）；0 表示可重发。成功发码武装（429 限流仅展示文案、不武装）。 */
   remainingSeconds: number
   /** 发码失败的内联文案（限流/网络/邮箱域错误）；图形码错误不在此，见 captcha.error。无错误为 null。 */
   error: string | null
@@ -55,7 +55,7 @@ export interface UseSendCode {
  *
  * 邮箱分支：send(contact) → sendEmailCode。手机分支：判 phone 即取图形码 → send(contact, captchaCode)
  * 走 sendSmsCode（后端 verifyAndDelete 一次性消费 captchaId）→ 每次发码尝试（成功/失败）后自动重取新图形码。
- * 429 限流武装冷却（成功冷却同源 useCountdown）。稳定层纯 TS：UI 调 send/fetchCaptcha/reset，本 hook 管状态机。
+ * 429 限流仅展示文案、不武装冷却（UI 冷却才是防刷主手段；429 是后端兜底节流）。稳定层纯 TS：UI 调 send/fetchCaptcha/reset，本 hook 管状态机。
  * #8 登录验证码登录复用本 hook，仅换 purpose=LOGIN。
  */
 export function useSendCode(deps?: UseSendCodeDeps): UseSendCode {
@@ -139,8 +139,7 @@ export function useSendCode(deps?: UseSendCodeDeps): UseSendCode {
         setStatus('error')
         const msg = toMessage(e)
         if (e instanceof SsoApiError && e.status === 429) {
-          // 429 限流武装冷却：按响应秒数锁定重发（与成功冷却同源 useCountdown）
-          countdown.start(parseCooldownSeconds(e.message))
+          // 429 是后端兜底节流：前端不再武装冷却（UI 冷却才是防刷主手段），仅展示文案
           setError(msg)
         } else if (parsed.type === 'phone' && e instanceof SsoApiError && e.status === 400) {
           // 手机分支 400 = 图形码错/过期（手机号已客户端预校验）→ 图形码区
@@ -174,14 +173,4 @@ export function useSendCode(deps?: UseSendCodeDeps): UseSendCode {
 function toMessage(e: unknown): string {
   if (e instanceof SsoApiError) return e.message
   return '操作失败，请稍后重试'
-}
-
-/**
- * 从 429 限流文案解析冷却秒数。⚠️ 契约缺口：identity 后端 429 体只带 `{code,message}`，无结构化秒数
- * （RATE_LIMIT_EMAIL/PHONE 文案「请60秒后再试」；IP 限流「发送次数过多，请稍后再试」连数字都没有）。
- * 故从 message 取首位数字；取不到则用默认值。已提后端 issue 暴露结构化 retryAfterSeconds，届时移除此解析。
- */
-function parseCooldownSeconds(message: string | undefined, fallback = 60): number {
-  const match = /\d+/.exec(message ?? '')
-  return match ? Math.max(1, Number(match[0])) : fallback
 }

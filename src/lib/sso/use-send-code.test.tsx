@@ -55,7 +55,7 @@ describe('useSendCode', () => {
     expect(send).toHaveBeenCalledWith('alice@example.com', 'LOGIN')
   })
 
-  it('transitions to error and arms the cooldown from the message on rate limit (429)', async () => {
+  it('does not arm the cooldown on rate limit (429), only shows the backend message', async () => {
     const send = vi.fn().mockRejectedValue(new SsoApiError('请60秒后再试', 429))
     const { result } = renderHook(() => useSendCode({ send }))
 
@@ -65,11 +65,11 @@ describe('useSendCode', () => {
 
     expect(result.current.status).toBe('error')
     expect(result.current.error).toBe('请60秒后再试')
-    // 429 限流武装冷却：后端 429 体无结构化秒数，从 message 解析（见 CONTEXT.md 决策）
-    expect(result.current.remainingSeconds).toBe(60)
+    // 429 是后端兜底节流，前端不再武装冷却（UI 冷却才是防刷主手段）；remainingSeconds 保持 0
+    expect(result.current.remainingSeconds).toBe(0)
   })
 
-  it('falls back to a default cooldown when the 429 message has no digits (IP throttle)', async () => {
+  it('does not arm cooldown on IP-throttle 429 either (message has no digits)', async () => {
     const send = vi.fn().mockRejectedValue(new SsoApiError('发送次数过多，请稍后再试', 429))
     const { result } = renderHook(() => useSendCode({ send }))
 
@@ -78,7 +78,8 @@ describe('useSendCode', () => {
     })
 
     expect(result.current.status).toBe('error')
-    expect(result.current.remainingSeconds).toBe(60)
+    expect(result.current.error).toBe('发送次数过多，请稍后再试')
+    expect(result.current.remainingSeconds).toBe(0)
   })
 
   it('does not arm cooldown on non-rate-limit errors (400)', async () => {

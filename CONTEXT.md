@@ -14,10 +14,10 @@ _Avoid_: 验证码（歧义）、短信码/邮箱码
 **目的（Purpose）**：动态验证码的绑定上下文（`REGISTER`/`LOGIN`/`RESET_PASSWORD`）；**跨目的不可复用**——注册码不能用于登录。
 _Avoid_: 用途
 
-**冷却（Cooldown）**：发码成功后对**同一联络方式**的重发锁定窗口；改联络方式即换桶、冷却重置。与【限流】不同：那是节流，这是成功后的自锁。
+**冷却（Cooldown）**：发码成功后对**同一联络方式**的重发锁定窗口；只跟成功响应走、改联络方式即换桶重置。与【限流】不同：那是节流，这是成功后的自锁。
 _Avoid_: 限流
 
-**限流（Rate Limit）**：发码请求的节流策略（按联络方式或按 IP），触发返 429；前端把其响应时长当作冷却处理。
+**限流（Rate Limit）**：发码请求的节流策略（按联络方式或按 IP），触发返 429；后端兜底节流，前端不再据其武装冷却（429 仅展示文案）。
 _Avoid_: 冷却
 
 ## 设计原则（用户定，2026-08-02）
@@ -48,7 +48,7 @@ _Avoid_: 冷却
 注册页 → fetch POST /api/auth/register（同上 + email/phone 至少其一 + **emailCode/phoneCode 必填（ADR-0001 强制当场验码）** + password 必填）
   → 注册即登录（同 login 后半段）；错码 400 / 已注册 409 → 字段级内联（见下方陷阱）
 注册页 → fetch POST /api/account/verification-code/email `{email,purpose:'REGISTER'}`（**ApiResponse 包装**端点）
-  → 成功 `{code:200,message,data:{expireInSeconds,resentAfterSeconds}}` → 倒计时按 `resentAfterSeconds`（归一化为 cooldownSeconds）；429 限流体 `{code:429,message:"请60秒后再试"}` 无结构秒数
+  → 成功 `{code:200,message,data:{expireInSeconds,resentAfterSeconds}}` → 倒计时按 `resentAfterSeconds`（归一化为 cooldownSeconds，缺字段/非数字回退默认 60s）；429 限流体 `{code:429,message}` 仅展示文案、不武装冷却
 ```
 
 > ⚠️ **字段级错误映射契约陷阱（#10 落地时确认，读 identity 后端源码）**：注册错误体只带 `{code:<httpStatus>, message, data:null}`，**不含业务码字符串**——`ACCOUNT_007/008`、`VERIFICATION_CODE_INVALID/EXPIRED` 仅存在于后端枚举，`GlobalExceptionHandler` 经 `ApiResponse.error(codeMessage)` 序列化时只把 `httpStatus` 放进 `$.code`。故前端字段路由只能按 httpStatus（`registerErrorField`）：**409→contact**（注册唯一 409 = 邮箱/手机号已被使用）、**400 域错误（有 `message`、非 OIDC `{error}`）→code**（提交时联络方式已客户端校验，现实 400 即验码错/过期）、**400 OIDC/其余→顶部横幅**。**已知局限**：后端若新增其它 400 域错误（如密码强度不足、联络方式格式），也会被归到 code 字段——待后端在响应体暴露业务码字符串后细化（届时改 `registerErrorField` 按 code 路由，回归这两条测试）。业务码↔httpStatus 对照见 identity `AccountError`/`VerificationCodeError`。
@@ -147,3 +147,4 @@ src/
 - 2026-08-10 Phase 1 收口（[#6](https://github.com/ZhangColin/aieducenter-identity-web/issues/6) / [#3](https://github.com/ZhangColin/aieducenter-identity-web/issues/3)）：checklist 1-3 四进程真机实测通过、5 错误态稳定层单测覆盖 + 手机路径 e2e；登出（4）属 demo RP-initiated（identity-web 无登出 UI，见范围），验证步骤归兄弟仓 `local-sso-debugging.md` / identity#38。identity-web 侧 Phase 1 功能（登录 / 注册 / 邮箱+手机接码闭环 + 品牌显示 + 内联错误 + 二次免登）完成；[#8 登录验证码登录](https://github.com/ZhangColin/aieducenter-identity-web/issues/8) 为后续。
 - 2026-08-10 [#12 /error 兜底路由](https://github.com/ZhangColin/aieducenter-identity-web/issues/12)（identity #39 前置 / ADR-0006 跳转目标）落地：identity 后端 `/authorize`、`/logout` 出错 302 跳此页。薄路由 `app/error/page.tsx` 解析 `?error&error_description&client_id`（仅取 `client_id`，error/error_description 在路由边界丢弃、不透传给用户）→ 客户端 `error-flow` → `ErrorScreen` 套 `AuthShell`（视觉参照 `InvalidLinkNotice`，圆形图标+标题+文案）。稳定层新增 `error-notice.ts`（文案决策：clientName 在→「请回到「X」重新发起登录」，缺失/失败→通用兜底）+ `use-client-name.ts`（**不复用 `useClientInfo`**——其 400→invalidLink 是登录页专用语义；错误页任意失败含 400/404/网络/5xx/空一律降级 undefined，页面照常渲染不崩）。**无可点外链**（BFF 选项 1，纯引导文案），可作独立目的地直达（不依赖前置导航状态）。稳定层单测覆盖（只测 `lib/sso/`）。
 - 2026-08-10 [#8 登录页验证码登录](https://github.com/ZhangColin/aieducenter-identity-web/issues/8)（复用 #7 图形码组件 + 发码封装）落地：登录页加「验证码登录」tab，与密码登录并存切换；账号字段跨方式共享。**复用 #7 零重建**：`CaptchaField`（手机发码前置图形码）+ `useSendCode`（purpose=LOGIN，与注册 REGISTER 分键）原样复用，本票只换 purpose。**稳定层新增 `loginByCode()`**：`POST /api/auth/login-code` 与 `/login` 同契约——`{...authorize, account, code}` 单字段（后端按 `@` 区分邮箱/手机，前端不拆 email/phone，区别于 register），成功 200 {redirectUrl}。**错误映射 `loginCodeErrorField`**：防枚举核心——错码与「账号不存在」后端同一 400 CODE_INVALID（status/message 完全一致）→ 前端同归 `code` 字段同文案，不区分；停用/锁定（401，验码通过后告知）+ OIDC + 网络/5xx → 顶部横幅（不归属字段）。`SsoSubmitValues.password` 改可选（验证码登录无密码），login/register 动作 `?? ''` 类型桥接（真实路径恒有值，零行为变更）。**两登录方式各持独立 `useSsoFlow`**（密码=默认 login 动作 / 验证码=注入 loginByCode 动作），账号共享、状态互不串。密码登录 JSX 原样保留（回归无损）。稳定层单测覆盖 `loginByCode` 封装 + 错误映射 + 防枚举（10 例）；UI 层不测（分离原则）。e2e（四进程 + dev 固定码 qa58/246810）待验收 checklist。
+- 2026-08-12 [#13 接码倒计时改用后端 `resentAfterSeconds`](https://github.com/ZhangColin/aieducenter-identity-web/issues/13)（[identity#34](https://github.com/ZhangColin/aieducenter-identity/issues/34) 契约固化后的收口）落地：**冷却只跟发码成功响应走**——用成功体 `resentAfterSeconds` 武装倒计时；归一化层新增 `normalizeCooldownSeconds`（缺字段/非数字/非正回退默认 60s，杜绝 `undefined`/`NaN` 流入倒计时静默失效，`cooldownSeconds` 契约强化为始终有限正整数）。**429 限流改为仅展示文案、不再武装冷却**（UI 冷却才是防刷主手段，429 只是后端兜底节流；多端首请求撞 429 走「通用文案、无倒计时」取舍），删除 `parseCooldownSeconds`（从 429 文案正则解析秒数的临时 hack）。零波及 `useCountdown` 原语与后端契约（identity#34 已结案，不在前端绕）；术语表【冷却】/【限流】+ 契约段同步更新。稳定层单测：归一化层补「缺字段（email+sms）/非数字（email）→ 默认冷却」、`useSendCode` 429 用例翻面（`remainingSeconds === 0`）。

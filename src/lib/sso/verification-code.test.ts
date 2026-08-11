@@ -30,6 +30,42 @@ describe('sendEmailCode', () => {
     expect(JSON.parse(init.body)).toEqual({ email: 'alice@example.com', purpose: 'REGISTER' })
   })
 
+  it('falls back to the default cooldown when resentAfterSeconds is missing', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        Response.json({
+          code: 200,
+          message: 'Success',
+          data: { expireInSeconds: 300 },
+        }),
+      ),
+    )
+
+    const result = await sendEmailCode('alice@example.com', 'REGISTER')
+
+    // 成功体偶发缺 resentAfterSeconds → 回退默认 60s，杜绝 undefined 流入倒计时静默失效
+    expect(result).toEqual({ expireInSeconds: 300, cooldownSeconds: 60 })
+  })
+
+  it('falls back to the default cooldown when resentAfterSeconds is non-numeric', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        Response.json({
+          code: 200,
+          message: 'Success',
+          data: { expireInSeconds: 300, resentAfterSeconds: 'later' },
+        }),
+      ),
+    )
+
+    const result = await sendEmailCode('alice@example.com', 'REGISTER')
+
+    // 非数字同样回退默认，保证 cooldownSeconds 始终是有限正整数
+    expect(result).toEqual({ expireInSeconds: 300, cooldownSeconds: 60 })
+  })
+
   it('surfaces the backend message on rate limit (429) as an SsoApiError', async () => {
     vi.stubGlobal(
       'fetch',
@@ -109,6 +145,24 @@ describe('sendSmsCode', () => {
       captchaId: 'captcha-id-1',
       captchaCode: 'qa58',
     })
+  })
+
+  it('falls back to the default cooldown when resentAfterSeconds is missing', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        Response.json({
+          code: 200,
+          message: 'Success',
+          data: { expireInSeconds: 300 },
+        }),
+      ),
+    )
+
+    const result = await sendSmsCode('13800138000', 'REGISTER', 'id', 'qa58')
+
+    // 与邮箱同源归一化：缺字段回退默认 60s
+    expect(result).toEqual({ expireInSeconds: 300, cooldownSeconds: 60 })
   })
 
   it('surfaces the backend message on rate limit (429) as an SsoApiError', async () => {

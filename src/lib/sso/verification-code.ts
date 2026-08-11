@@ -13,8 +13,33 @@ export type VerificationPurpose = 'REGISTER' | 'LOGIN' | 'RESET_PASSWORD'
 export interface SendCodeResult {
   /** 验证码有效期秒数。 */
   expireInSeconds: number
-  /** 同一联络方式的重发冷却秒数（成功后自锁窗口）。 */
+  /** 同一联络方式的重发冷却秒数（成功后自锁窗口）；归一化保证始终是有限正整数。 */
   cooldownSeconds: number
+}
+
+/** 与后端默认冷却对齐的兜底值（邮箱/手机各自，后端缺省 60s）。 */
+const DEFAULT_COOLDOWN_SECONDS = 60
+
+/**
+ * 把后端 `resentAfterSeconds` 归一化为有限正整数的 `cooldownSeconds`：
+ * 缺失 / 非数字 / 非正时回退默认值，杜绝 `undefined`/`NaN` 流入倒计时导致静默失效。
+ */
+function normalizeCooldownSeconds(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 1
+    ? value
+    : DEFAULT_COOLDOWN_SECONDS
+}
+
+/**
+ * 把发码成功响应体归一化为 `SendCodeResult`：解包 ApiResponse 的 data，
+ * 再经 `normalizeCooldownSeconds` 兜底为有限正整数的 `cooldownSeconds`。
+ */
+function toSendCodeResult(body: unknown): SendCodeResult {
+  const data = unwrapData<{ expireInSeconds: number; resentAfterSeconds?: number }>(body)
+  return {
+    expireInSeconds: data.expireInSeconds,
+    cooldownSeconds: normalizeCooldownSeconds(data.resentAfterSeconds),
+  }
 }
 
 /**
@@ -49,8 +74,7 @@ export async function sendEmailCode(
   if (!ok) {
     throw new SsoApiError(sendCodeErrorMessage(status, body), status)
   }
-  const data = unwrapData<{ expireInSeconds: number; resentAfterSeconds: number }>(body)
-  return { expireInSeconds: data.expireInSeconds, cooldownSeconds: data.resentAfterSeconds }
+  return toSendCodeResult(body)
 }
 
 /**
@@ -74,8 +98,7 @@ export async function sendSmsCode(
   if (!ok) {
     throw new SsoApiError(sendCodeErrorMessage(status, body), status)
   }
-  const data = unwrapData<{ expireInSeconds: number; resentAfterSeconds: number }>(body)
-  return { expireInSeconds: data.expireInSeconds, cooldownSeconds: data.resentAfterSeconds }
+  return toSendCodeResult(body)
 }
 
 /**
