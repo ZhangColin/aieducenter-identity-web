@@ -39,15 +39,15 @@ _Avoid_: 冷却
 业务应用 → GET /authorize?client_id&redirect_uri&state&nonce&scope
   ├─ 有 SSO cookie → 302 回 redirect_uri?code&state（二次免登）
   └─ 无 SSO cookie → 302 到 login-page-url?client_id&redirect_uri&state&nonce&scope（透传，snake_case）
-登录页 → fetch POST /api/auth/login（JSON，同源经 Next rewrite；camelCase：clientId/redirectUri/state/nonce/scope/account/password）
+登录页 → fetch POST /api/sso/login（JSON，同源经 Next rewrite；camelCase：clientId/redirectUri/state/nonce/scope/account/password）
   → 成功：200 {redirectUrl} + Set-Cookie(SSO 会话) → window.location 顶层导航回业务应用（#26 变更后）
   → 失败：{code,message}（凭据错 401 防枚举 / 停用 / 锁定）→ 内联展示，不刷新
-登录页（验证码登录 tab）→ fetch POST /api/auth/login-code（与 /login 同契约：account 单字段 + code 单字段，不拆 email/phone；authorize 透传）
+登录页（验证码登录 tab）→ fetch POST /api/sso/login-code（与 /login 同契约：account 单字段 + code 单字段，不拆 email/phone；authorize 透传）
   → 成功：200 {redirectUrl} + Set-Cookie → 顶层导航回业务应用
   → 失败：防枚举——错码与「账号不存在」后端同一 400 CODE_INVALID（同 status/message）→ 验证码字段内联同一文案；停用/锁定（401，验码通过后告知）/ OIDC / 网络 → 顶部横幅
-注册页 → fetch POST /api/auth/register（同上 + email/phone 至少其一 + **emailCode/phoneCode 必填（ADR-0001 强制当场验码）** + password 必填）
+注册页 → fetch POST /api/sso/register（同上 + email/phone 至少其一 + **emailCode/phoneCode 必填（ADR-0001 强制当场验码）** + password 必填）
   → 注册即登录（同 login 后半段）；错码 400 / 已注册 409 → 字段级内联（见下方陷阱）
-注册页 → fetch POST /api/account/verification-code/email `{email,purpose:'REGISTER'}`（**ApiResponse 包装**端点）
+注册页 → fetch POST /api/sso/verification-code/email `{email,purpose:'REGISTER'}`（**ApiResponse 包装**端点）
   → 成功 `{code:200,message,data:{expireInSeconds,resentAfterSeconds}}` → 倒计时按 `resentAfterSeconds`（归一化为 cooldownSeconds，缺字段/非数字回退默认 60s）；429 限流体 `{code:429,message}` 仅展示文案、不武装冷却
 ```
 
@@ -59,15 +59,15 @@ _Avoid_: 冷却
 | 端点 | 形态 | identity-web 用法 |
 |---|---|---|
 | `GET /authorize` | 302 状态机 | 不调（消费方入口） |
-| `POST /api/auth/login` | JSON + form 双吃 | **fetch JSON**（form 变体 #23 不用） |
-| `POST /api/auth/login-code` | JSON + form 双吃 | **验证码登录（#8）fetch JSON**：`{...authorize, account, code}`（account 单字段、code 单字段，与 /login 同契约）；成功 200 {redirectUrl}；防枚举错码/账号不存在同一 400 CODE_INVALID → code 字段、停用/锁定 401 → 横幅 |
-| `POST /api/auth/register` | JSON + form 双吃 | **fetch JSON** |
-| `GET /api/auth/client-info?client_id=` | JSON 公开 | 登录/注册页查「登录到 XXX 应用」；只回 `{clientId, clientName}`（#24） |
+| `POST /api/sso/login` | JSON + form 双吃 | **fetch JSON**（form 变体 #23 不用） |
+| `POST /api/sso/login-code` | JSON + form 双吃 | **验证码登录（#8）fetch JSON**：`{...authorize, account, code}`（account 单字段、code 单字段，与 /login 同契约）；成功 200 {redirectUrl}；防枚举错码/账号不存在同一 400 CODE_INVALID → code 字段、停用/锁定 401 → 横幅 |
+| `POST /api/sso/register` | JSON + form 双吃 | **fetch JSON** |
+| `GET /api/sso/client-info?client_id=` | JSON 公开 | 登录/注册页查「登录到 XXX 应用」；只回 `{clientId, clientName}`（#24） |
 | `GET /logout` | 302 | 不调（业务应用发起，#19） |
-| `POST /api/account/verification-code/email` | JSON（**ApiResponse 包装**） | **注册发码（#10）**：`sendEmailCode(email,'REGISTER')`，`resentAfterSeconds→cooldownSeconds` 归一化；429 限流无结构秒数 |
-| `GET /api/captcha` | JSON（**ApiResponse 包装**） | **注册手机发码（#11）**：`fetchCaptcha()` → `{captchaId, image(base64 data-url)}`；一次性，发短信时被后端 `verifyAndDelete` 消费 |
-| `POST /api/account/verification-code/sms` | JSON（**ApiResponse 包装**） | **注册手机发码（#11）**：`sendSmsCode(phone,'REGISTER',captchaId,captchaCode)`；成功 `{expireInSeconds,resentAfterSeconds}`→归一化 cooldownSeconds；429 限流 / 400 CAPTCHA_INVALID·CAPTCHA_EXPIRED·手机号格式 |
-| `POST /api/account/verify-code` | JSON | 本期不接（邮箱校验在后端 register 内联消费） |
+| `POST /api/sso/verification-code/email` | JSON（**ApiResponse 包装**） | **注册发码（#10）**：`sendEmailCode(email,'REGISTER')`，`resentAfterSeconds→cooldownSeconds` 归一化；429 限流无结构秒数 |
+| `GET /api/sso/captcha` | JSON（**ApiResponse 包装**） | **注册手机发码（#11）**：`fetchCaptcha()` → `{captchaId, image(base64 data-url)}`；一次性，发短信时被后端 `verifyAndDelete` 消费 |
+| `POST /api/sso/verification-code/sms` | JSON（**ApiResponse 包装**） | **注册手机发码（#11）**：`sendSmsCode(phone,'REGISTER',captchaId,captchaCode)`；成功 `{expireInSeconds,resentAfterSeconds}`→归一化 cooldownSeconds；429 限流 / 400 CAPTCHA_INVALID·CAPTCHA_EXPIRED·手机号格式 |
+| `POST /api/sso/verify-code` | JSON | 本期不接（邮箱校验在后端 register 内联消费） |
 | `POST /token` · `/userinfo` · `/jwks` · `/discovery` | 机机 | 不调（消费方 BFF 直连） |
 | 社交登录 / MFA | **未实现** | 后端尚无控制器 |
 
@@ -108,7 +108,7 @@ src/
 **应用对接面（dev/prod 同构）**：应用唯一配置 = IdP base URL（dev `http://identity.localhost:10001` / prod `https://login.company.com`）。
 
 **SSO 内部拼合**：
-- dev：`/authorize` 无 cookie → 302 → `identity.localhost:10002/login`（identity 后端 local `login-page-url` 改一行，登录页落地后切）；identity-web fetch `/api/auth/*` 经 Next rewrite → `127.0.0.1:10001`（唯一一条 rewrite，修正现配置的错端口 8081）；SSO cookie host-only 跨端口共享；dev-login 兜底保留（identity-web 没起时后端+demo 照常）。
+- dev：`/authorize` 无 cookie → 302 → `identity.localhost:10002/login`（identity 后端 local `login-page-url` 改一行，登录页落地后切）；identity-web fetch `/api/sso/*` 经 Next rewrite → `127.0.0.1:10001`（唯一一条 rewrite，修正现配置的错端口 8081）；SSO cookie host-only 跨端口共享；dev-login 兜底保留（identity-web 没起时后端+demo 照常）。
 - prod：`login.company.com/` → identity-web 静态；`/authorize`·`/api/*`·`/token` → 后端（nginx 拼合）。
 
 ### 关键配置事实
@@ -148,3 +148,4 @@ src/
 - 2026-08-10 [#12 /error 兜底路由](https://github.com/ZhangColin/aieducenter-identity-web/issues/12)（identity #39 前置 / ADR-0006 跳转目标）落地：identity 后端 `/authorize`、`/logout` 出错 302 跳此页。薄路由 `app/error/page.tsx` 解析 `?error&error_description&client_id`（仅取 `client_id`，error/error_description 在路由边界丢弃、不透传给用户）→ 客户端 `error-flow` → `ErrorScreen` 套 `AuthShell`（视觉参照 `InvalidLinkNotice`，圆形图标+标题+文案）。稳定层新增 `error-notice.ts`（文案决策：clientName 在→「请回到「X」重新发起登录」，缺失/失败→通用兜底）+ `use-client-name.ts`（**不复用 `useClientInfo`**——其 400→invalidLink 是登录页专用语义；错误页任意失败含 400/404/网络/5xx/空一律降级 undefined，页面照常渲染不崩）。**无可点外链**（BFF 选项 1，纯引导文案），可作独立目的地直达（不依赖前置导航状态）。稳定层单测覆盖（只测 `lib/sso/`）。
 - 2026-08-10 [#8 登录页验证码登录](https://github.com/ZhangColin/aieducenter-identity-web/issues/8)（复用 #7 图形码组件 + 发码封装）落地：登录页加「验证码登录」tab，与密码登录并存切换；账号字段跨方式共享。**复用 #7 零重建**：`CaptchaField`（手机发码前置图形码）+ `useSendCode`（purpose=LOGIN，与注册 REGISTER 分键）原样复用，本票只换 purpose。**稳定层新增 `loginByCode()`**：`POST /api/auth/login-code` 与 `/login` 同契约——`{...authorize, account, code}` 单字段（后端按 `@` 区分邮箱/手机，前端不拆 email/phone，区别于 register），成功 200 {redirectUrl}。**错误映射 `loginCodeErrorField`**：防枚举核心——错码与「账号不存在」后端同一 400 CODE_INVALID（status/message 完全一致）→ 前端同归 `code` 字段同文案，不区分；停用/锁定（401，验码通过后告知）+ OIDC + 网络/5xx → 顶部横幅（不归属字段）。`SsoSubmitValues.password` 改可选（验证码登录无密码），login/register 动作 `?? ''` 类型桥接（真实路径恒有值，零行为变更）。**两登录方式各持独立 `useSsoFlow`**（密码=默认 login 动作 / 验证码=注入 loginByCode 动作），账号共享、状态互不串。密码登录 JSX 原样保留（回归无损）。稳定层单测覆盖 `loginByCode` 封装 + 错误映射 + 防枚举（10 例）；UI 层不测（分离原则）。e2e（四进程 + dev 固定码 qa58/246810）待验收 checklist。
 - 2026-08-12 [#13 接码倒计时改用后端 `resentAfterSeconds`](https://github.com/ZhangColin/aieducenter-identity-web/issues/13)（[identity#34](https://github.com/ZhangColin/aieducenter-identity/issues/34) 契约固化后的收口）落地：**冷却只跟发码成功响应走**——用成功体 `resentAfterSeconds` 武装倒计时；归一化层新增 `normalizeCooldownSeconds`（缺字段/非数字/非正回退默认 60s，杜绝 `undefined`/`NaN` 流入倒计时静默失效，`cooldownSeconds` 契约强化为始终有限正整数）。**429 限流改为仅展示文案、不再武装冷却**（UI 冷却才是防刷主手段，429 只是后端兜底节流；多端首请求撞 429 走「通用文案、无倒计时」取舍），删除 `parseCooldownSeconds`（从 429 文案正则解析秒数的临时 hack）。零波及 `useCountdown` 原语与后端契约（identity#34 已结案，不在前端绕）；术语表【冷却】/【限流】+ 契约段同步更新。稳定层单测：归一化层补「缺字段（email+sms）/非数字（email）→ 默认冷却」、`useSendCode` 429 用例翻面（`remainingSeconds === 0`）。
+- 2026-08-12 [#14 配合 identity namespace 迁移：调用 path 改到 /api/sso/*](https://github.com/ZhangColin/aieducenter-identity-web/issues/14)（配合 [identity#55](https://github.com/ZhangColin/aieducenter-identity/issues/55)）落地：identity 后端按限界上下文重整 namespace——SSO 浏览器闭环端点统一迁到 `/api/sso/*`，**动机：腾空 `/api/account/*` 给签名服务**（identity#56/#58）。identity-web 实调面 7 个 path 同步迁：`/api/auth/{login,login-code,register,client-info}` + `/api/account/verification-code/{email,sms}` + `/api/captcha` → 全部归 `/api/sso/*`（前缀首次同构）。**稳定层抽 `SSO_API_PREFIX = '/api/sso'`**（`sso-api.ts` 导出、`verification-code.ts` 复用），7 处拼前缀——契约基址收敛到一处，下次 path 变动一行改。**`next.config` rewrite 不动**（`/api/:path*` path-agnostic 透传，自动转发 `/api/sso/*`→后端）。**无兼容窗口（用户拍）**：后端硬切换、无双 path，故 #14 合并/发布**硬依赖 identity#55 已上线**——merge 前需确认后端实际对 `/api/sso/*` 提供服务，否则全链路断。**非 ADR（grill-with-docs 拍）**：字符串改名、可逆、后端逼定，三要素缺二；迁移映射与动机记于此即可。CONTEXT.md 活契约（端点表 / 流程块 / dev 拓扑）扫到 `/api/sso/*`；历史日志条目（如 #8 的 `/api/auth/login-code`）**不改**——追加式历史如实，#14 本条即新旧之桥。词表不加（「namespace」「签名服务」是兄弟服务/路由实现细节，非 identity-web 域语言）。稳定层单测断言同步改。

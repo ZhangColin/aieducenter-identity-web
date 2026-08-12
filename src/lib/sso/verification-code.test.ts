@@ -24,7 +24,7 @@ describe('sendEmailCode', () => {
     expect(result).toEqual({ expireInSeconds: 300, cooldownSeconds: 60 })
 
     const [url, init] = fetchMock.mock.calls[0]
-    expect(url).toBe('/api/account/verification-code/email')
+    expect(url).toBe('/api/sso/verification-code/email')
     expect(init.method).toBe('POST')
     expect(init.headers).toEqual({ 'Content-Type': 'application/json' })
     expect(JSON.parse(init.body)).toEqual({ email: 'alice@example.com', purpose: 'REGISTER' })
@@ -136,7 +136,7 @@ describe('sendSmsCode', () => {
     expect(result).toEqual({ expireInSeconds: 300, cooldownSeconds: 60 })
 
     const [url, init] = fetchMock.mock.calls[0]
-    expect(url).toBe('/api/account/verification-code/sms')
+    expect(url).toBe('/api/sso/verification-code/sms')
     expect(init.method).toBe('POST')
     expect(init.headers).toEqual({ 'Content-Type': 'application/json' })
     expect(JSON.parse(init.body)).toEqual({
@@ -207,7 +207,7 @@ describe('sendSmsCode', () => {
 })
 
 describe('fetchCaptcha', () => {
-  it('GETs /api/captcha and unwraps the ApiResponse to {captchaId,image}', async () => {
+  it('GETs /api/sso/captcha and unwraps the ApiResponse to {captchaId,image}', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       Response.json({
         code: 200,
@@ -222,7 +222,7 @@ describe('fetchCaptcha', () => {
     expect(result).toEqual({ captchaId: 'captcha-id-1', image: 'data:image/png;base64,AAAA' })
 
     const [url, init] = fetchMock.mock.calls[0]
-    expect(url).toBe('/api/captcha')
+    expect(url).toBe('/api/sso/captcha')
     expect(init.method).toBe('GET')
   })
 

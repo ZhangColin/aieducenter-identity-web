@@ -1,7 +1,13 @@
 import type { AuthorizeParams } from './authorize-params'
 import { parseContact } from './contact'
 
-/** 后端契约形状（identity /api/auth/*，详见本仓 CONTEXT.md「对接契约」）。 */
+/**
+ * SSO 浏览器闭环端点的前缀（identity 后端 namespace 迁移后的 `/api/sso/*`，#14）。
+ * login/register/client-info 与发码/captcha 路径均拼在此前缀下（见 CONTEXT.md「对接契约」）。
+ */
+export const SSO_API_PREFIX = '/api/sso'
+
+/** 后端契约形状（identity /api/sso/*，详见本仓 CONTEXT.md「对接契约」）。 */
 export interface ClientInfo {
   clientId: string
   clientName: string
@@ -17,7 +23,7 @@ export interface LoginResult {
 }
 
 /**
- * 验证码登录请求（`/api/auth/login-code`，issue #8）。
+ * 验证码登录请求（`/api/sso/login-code`，issue #8；path 随 #14 namespace 迁移）。
  * 与 login 同一契约：account 单字段（后端按 `@` 区分邮箱/手机，前端不拆）、code 单字段。
  * authorize 上下文全链路透传（与 login/register 一致）。
  */
@@ -53,7 +59,7 @@ export class SsoApiError extends Error {
 }
 
 export async function login(input: LoginInput): Promise<LoginResult> {
-  const { ok, status, body } = await requestJSON('/api/auth/login', {
+  const { ok, status, body } = await requestJSON(`${SSO_API_PREFIX}/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
@@ -74,7 +80,7 @@ export async function login(input: LoginInput): Promise<LoginResult> {
  */
 export async function loginByCode(input: LoginCodeInput): Promise<LoginResult> {
   const { account, code, ...authorize } = input
-  const { ok, status, body } = await requestJSON('/api/auth/login-code', {
+  const { ok, status, body } = await requestJSON(`${SSO_API_PREFIX}/login-code`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ...authorize, account, code }),
@@ -104,7 +110,7 @@ export async function register(input: RegisterInput): Promise<LoginResult> {
     throw new SsoApiError('请输入正确的邮箱或手机号')
   }
   const codeKey = parsed.type === 'email' ? 'emailCode' : 'phoneCode'
-  const { ok, status, body } = await requestJSON('/api/auth/register', {
+  const { ok, status, body } = await requestJSON(`${SSO_API_PREFIX}/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ...authorize, [parsed.type]: parsed.value, [codeKey]: code, password }),
@@ -144,7 +150,7 @@ function hasRedirectUrl(body: unknown): body is LoginResult {
 /** 查询「登录到 XXX 应用」品牌信息。失败抛 SsoApiError（400 = client_id 无效）。 */
 export async function fetchClientInfo(clientId: string): Promise<ClientInfo> {
   const { ok, status, body } = await requestJSON(
-    `/api/auth/client-info?client_id=${encodeURIComponent(clientId)}`,
+    `${SSO_API_PREFIX}/client-info?client_id=${encodeURIComponent(clientId)}`,
   )
   if (!ok) {
     throw new SsoApiError('应用信息查询失败', status)

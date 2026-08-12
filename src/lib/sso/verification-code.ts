@@ -1,4 +1,4 @@
-import { hasMessage, requestJSON, SsoApiError } from './sso-api'
+import { hasMessage, requestJSON, SsoApiError, SSO_API_PREFIX } from './sso-api'
 
 /**
  * 动态验证码【目的】（绑定上下文，跨目的不可复用——注册码不能用于登录）。
@@ -59,14 +59,14 @@ interface ApiResponse<T> {
 }
 
 /**
- * 发送邮箱验证码（`POST /api/account/verification-code/email`，ApiResponse 包装端点）。
+ * 发送邮箱验证码（`POST /api/sso/verification-code/email`，ApiResponse 包装端点；path 随 #14 namespace 迁移）。
  * 成功解包 data 并归一化为 `{expireInSeconds, cooldownSeconds}`；失败抛 SsoApiError（429 限流 / 400 格式 / 网络）。
  */
 export async function sendEmailCode(
   email: string,
   purpose: VerificationPurpose,
 ): Promise<SendCodeResult> {
-  const { ok, status, body } = await requestJSON('/api/account/verification-code/email', {
+  const { ok, status, body } = await requestJSON(`${SSO_API_PREFIX}/verification-code/email`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email, purpose }),
@@ -78,7 +78,7 @@ export async function sendEmailCode(
 }
 
 /**
- * 发送短信验证码（`POST /api/account/verification-code/sms`，ApiResponse 包装端点）。
+ * 发送短信验证码（`POST /api/sso/verification-code/sms`，ApiResponse 包装端点；path 随 #14 namespace 迁移）。
  * 短信路径需先解一张**一次性**图形码：后端 `verifyAndDelete` 在此调用内消费 captchaId/captchaCode，
  * 故每次发码（成功/失败）后调用方都必须重取新图形码（见 use-send-code 的手机分支生命周期）。
  * 成功解包 data 并归一化为 `{expireInSeconds, cooldownSeconds}`；失败抛 SsoApiError
@@ -90,7 +90,7 @@ export async function sendSmsCode(
   captchaId: string,
   captchaCode: string,
 ): Promise<SendCodeResult> {
-  const { ok, status, body } = await requestJSON('/api/account/verification-code/sms', {
+  const { ok, status, body } = await requestJSON(`${SSO_API_PREFIX}/verification-code/sms`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ phone, purpose, captchaId, captchaCode }),
@@ -102,11 +102,11 @@ export async function sendSmsCode(
 }
 
 /**
- * 获取图形验证码（`GET /api/captcha`，ApiResponse 包装端点）。
+ * 获取图形验证码（`GET /api/sso/captcha`，ApiResponse 包装端点；path 随 #14 namespace 迁移）。
  * 成功解包 data 为 `{captchaId, image}`；失败抛 SsoApiError（网络/非 200）。captchaId 为一次性，发短信时消费。
  */
 export async function fetchCaptcha(): Promise<Captcha> {
-  const { ok, status, body } = await requestJSON('/api/captcha', { method: 'GET' })
+  const { ok, status, body } = await requestJSON(`${SSO_API_PREFIX}/captcha`, { method: 'GET' })
   if (!ok) {
     throw new SsoApiError('图形验证码获取失败，请刷新重试', status)
   }

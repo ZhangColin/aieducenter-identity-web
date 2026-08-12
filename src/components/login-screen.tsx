@@ -36,7 +36,7 @@ export interface LoginScreenProps {
  * 登录表单（stitch「平台登录」右侧卡片）。
  * 两种方式并存，tab 切换（issue #8）：密码登录 / 验证码登录。账号字段跨方式共享。
  * 验证码登录复用 #7 的图形码组件（CaptchaField）与发码封装（useSendCode，purpose=LOGIN）——
- * 手机号发码前先过图形码，邮箱直发；提交 POST /api/auth/login-code（account + code）。
+ * 手机号发码前先过图形码，邮箱直发；提交 POST /api/sso/login-code（account + code）。
  * 防枚举：错码与账号不存在后端同一 CODE_INVALID → 同一验证码字段同一文案内联，不区分。
  * 纯展示：不识 URL/fetch，props in / callbacks out。
  */

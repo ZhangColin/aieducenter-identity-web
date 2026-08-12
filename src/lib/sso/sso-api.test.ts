@@ -26,7 +26,7 @@ describe('login', () => {
     expect(result).toEqual({ redirectUrl: 'http://demo.localhost:3000/callback?code=abc&state=abc' })
 
     const [url, init] = fetchMock.mock.calls[0]
-    expect(url).toBe('/api/auth/login')
+    expect(url).toBe('/api/sso/login')
     expect(init.method).toBe('POST')
     expect(init.headers).toEqual({ 'Content-Type': 'application/json' })
     expect(JSON.parse(init.body)).toEqual({
@@ -158,7 +158,7 @@ describe('loginByCode', () => {
     expect(result).toEqual({ redirectUrl: 'http://demo.localhost:3000/callback?code=abc&state=abc' })
 
     const [url, init] = fetchMock.mock.calls[0]
-    expect(url).toBe('/api/auth/login-code')
+    expect(url).toBe('/api/sso/login-code')
     expect(init.method).toBe('POST')
     expect(init.headers).toEqual({ 'Content-Type': 'application/json' })
     // 与 /login 同一契约：account 单字段（后端按 @ 区分邮箱/手机）、code 单字段（不拆 emailCode/phoneCode）
@@ -351,7 +351,7 @@ describe('register', () => {
     expect(result).toEqual({ redirectUrl: 'http://demo.localhost:3000/callback?code=abc&state=abc' })
 
     const [url, init] = fetchMock.mock.calls[0]
-    expect(url).toBe('/api/auth/register')
+    expect(url).toBe('/api/sso/register')
     expect(init.method).toBe('POST')
     expect(init.headers).toEqual({ 'Content-Type': 'application/json' })
     expect(JSON.parse(init.body)).toEqual({
@@ -551,7 +551,7 @@ describe('fetchClientInfo', () => {
     const info = await fetchClientInfo('demo')
 
     expect(info).toEqual({ clientId: 'demo', clientName: 'Demo 应用' })
-    expect(fetchMock.mock.calls[0][0]).toBe('/api/auth/client-info?client_id=demo')
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/sso/client-info?client_id=demo')
   })
 
   it('rejects with status 400 when client_id is invalid (page shows invalid-link state)', async () => {
